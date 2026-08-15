@@ -1,0 +1,24 @@
+Package: crowd.forecast.evaluation
+Title: Scoring and Aggregating Probabilistic Forecasts on Public Corpora
+Version: 0.1.0
+Authors@R: person("Alejandro", "Guerrero Padrés", role = c("aut", "cre"),
+    email = "alejandro.g.padres@gmail.com")
+Description: Analysis project. Builds a reproducible data layer over the Good
+    Judgment Project ACE tournament surveys and ForecastBench's 2024 human
+    round, then evaluates calibration and forecast-aggregation methods out of
+    sample. Not a package; DESCRIPTION records dependencies for renv.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Imports:
+    DBI,
+    duckdb,
+    readr,
+    dplyr,
+    tidyr,
+    purrr,
+    stringr,
+    glue,
+    jsonlite
+Suggests:
+    testthat,
+    lintr

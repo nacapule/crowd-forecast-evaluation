@@ -1,0 +1,12 @@
+data/raw/
+data/db/
+*.duckdb
+*.duckdb.wal
+.Rhistory
+.RData
+.Rproj.user
+renv/library/
+renv/staging/
+renv/local/
+renv/cellar/
+renv/sandbox/
