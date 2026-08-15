@@ -1,0 +1,147 @@
+# QA gate over the built DuckDB schema.
+#
+# Hard checks fail the build. Soft checks are reported with counts and left
+# to the scoring protocol to handle explicitly.
+
+qa_check <- function(name, hard, n_violations, detail = "") {
+  data.frame(
+    check = name, hard = hard, n_violations = n_violations,
+    pass = n_violations == 0, detail = detail
+  )
+}
+
+count1 <- function(con, sql) {
+  DBI::dbGetQuery(con, sql)[[1]]
+}
+
+run_qa_checks <- function(con) {
+  checks <- list()
+
+  checks$probability_domain <- qa_check(
+    "probability_domain_accepted", hard = TRUE,
+    count1(con,
+      "SELECT count(*) FROM forecasts_accepted
+       WHERE value IS NULL OR value < 0 OR value > 1"),
+    "accepted forecast probabilities must lie in [0, 1]"
+  )
+
+  checks$orphans <- qa_check(
+    "accepted_forecasts_join_questions", hard = TRUE,
+    count1(con,
+      "SELECT count(*) FROM forecasts_accepted f
+       ANTI JOIN questions_accepted q USING (ifp_id)"),
+    "every accepted forecast joins an accepted question"
+  )
+
+  checks$outcome_valid <- qa_check(
+    "binary_outcomes_are_a_or_b", hard = TRUE,
+    count1(con,
+      "SELECT count(*) FROM questions_accepted
+       WHERE outcome IS NULL OR outcome NOT IN ('a', 'b')"),
+    "accepted questions are closed binary IFPs resolved to a or b"
+  )
+
+  checks$question_accounting <- qa_check(
+    "question_accounting_identity", hard = TRUE,
+    abs(
+      count1(con, "SELECT count(*) FROM questions") -
+        (count1(con, "SELECT count(*) FROM questions_accepted") +
+           count1(con, "SELECT count(*) FROM questions_rejected"))
+    ),
+    "questions = accepted + rejected, no double counting"
+  )
+
+  checks$forecast_accounting <- qa_check(
+    "forecast_accounting_identity", hard = TRUE,
+    abs(
+      count1(con, "SELECT count(*) FROM forecasts") -
+        (count1(con, "SELECT count(*) FROM forecasts_accepted") +
+           count1(con, "SELECT count(*) FROM forecasts_rejected"))
+    ),
+    "forecast rows = accepted + rejected, no double counting"
+  )
+
+  checks$binary_view_complete <- qa_check(
+    "binary_view_one_row_per_event", hard = TRUE,
+    count1(con,
+      "SELECT count(*) FROM (
+         SELECT year, forecast_id, ifp_id, user_id
+         FROM forecasts_accepted
+         GROUP BY year, forecast_id, ifp_id, user_id
+       ) events") -
+      count1(con, "SELECT count(*) FROM binary_forecasts"),
+    "every accepted forecast event appears exactly once in binary_forecasts"
+  )
+
+  checks$out_of_window <- qa_check(
+    "forecasts_outside_question_window", hard = FALSE,
+    count1(con,
+      "SELECT count(*) FROM forecasts_accepted WHERE NOT in_window"),
+    "flagged only; the scoring protocol decides treatment"
+  )
+
+  checks$unknown_ifp_ids <- qa_check(
+    "forecast_ifp_ids_absent_from_questions", hard = FALSE,
+    count1(con,
+      "SELECT count(*) FROM forecasts f
+       ANTI JOIN questions q USING (ifp_id)"),
+    "forecast rows whose ifp_id is not in ifps.csv at all
+     (distinct from designed exclusions)"
+  )
+
+  checks$conditions_known <- qa_check(
+    "condition_codes_recognized", hard = FALSE,
+    count1(con,
+      "SELECT count(*) FROM forecasts_accepted
+       WHERE cond IS NULL OR cond NOT BETWEEN 1 AND 5"),
+    "cond group outside the documented 1-5 range"
+  )
+
+  do.call(rbind, checks)
+}
+
+qa_report_text <- function(con) {
+  res <- run_qa_checks(con)
+  acct <- DBI::dbGetQuery(con,
+    "SELECT level, reason, n FROM qa_accounting ORDER BY level, n DESC")
+  lines <- c(
+    "# QA report",
+    "",
+    sprintf("Generated: %s", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z")),
+    "",
+    "## Checks",
+    "",
+    "| check | type | violations | pass |",
+    "|---|---|---:|---|",
+    sprintf(
+      "| %s | %s | %d | %s |",
+      res$check, ifelse(res$hard, "hard", "soft"),
+      res$n_violations, ifelse(res$pass, "yes", "NO")
+    ),
+    "",
+    "## Accounting",
+    "",
+    "| level | reason | n |",
+    "|---|---|---:|",
+    sprintf("| %s | %s | %d |", acct$level, acct$reason, acct$n)
+  )
+  list(text = paste(lines, collapse = "\n"), results = res)
+}
+
+# Writes qa/qa_report.md and fails on any hard-check violation.
+run_qa_gate <- function(db = db_path(), out = file.path("qa", "qa_report.md")) {
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db, read_only = TRUE)
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+  rep <- qa_report_text(con)
+  dir.create(dirname(out), recursive = TRUE, showWarnings = FALSE)
+  writeLines(rep$text, out)
+  hard_fail <- rep$results[rep$results$hard & !rep$results$pass, ]
+  if (nrow(hard_fail) > 0) {
+    stop(
+      "QA gate failed: ",
+      paste(hard_fail$check, collapse = ", "),
+      call. = FALSE
+    )
+  }
+  invisible(rep$results)
+}
