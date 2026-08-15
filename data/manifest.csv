@@ -1,0 +1,9 @@
+filename,dataverse_file_id,bytes,md5,role,required
+ifps.csv,2917330,1072153,5c703d02284f8b563399967c554f1417,questions,TRUE
+survey_fcasts.yr1.csv,2917351,30495631,091ae92c90ec426772ea784a906d7ddb,forecasts,TRUE
+survey_fcasts.yr2.csv,2917352,42696467,528d1bfbff2ab8da6ba2b599b3b80e26,forecasts,TRUE
+survey_fcasts.yr3.csv,2917353,70701814,e5837d12b2a17d3ffd0f0bf1f46e61b0,forecasts,TRUE
+survey_fcasts.yr4.csv,2917354,170452790,47041be832baed547963c0ffd0d71a9d,forecasts,TRUE
+readme-2917338.txt,2917338,5804,e924167296441e0777f68b137411c8b9,docs,FALSE
+readme-2917350.txt,2917350,4382,304832fa3e6b06861897f31eda69ba1f,docs,FALSE
+all_individual_differences.README.md,2917333,71883,f8baeddf347ae8b28acff0d207c7e0e4,docs,FALSE
