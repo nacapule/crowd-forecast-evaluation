@@ -1,0 +1,144 @@
+# Data notes — Good Judgment Project ACE surveys
+
+Working notes for the data layer; drafted to become the data section of the
+write-up. Counts below are produced by the pipeline (`make data && make qa`)
+and reconciled against `qa/qa_report.md`.
+
+## Source
+
+Good Judgment Project, 2016, "GJP Data", Harvard Dataverse, V1,
+[doi:10.7910/DVN/BPCDH5](https://doi.org/10.7910/DVN/BPCDH5). License: CC0 1.0.
+
+The dataset covers the Good Judgment Project's four seasons (2011–2015) in
+IARPA's ACE geopolitical forecasting tournament. This project uses the survey
+forecast files and the question file; the dataset's prediction-market files
+(`pm_*`) record a different elicitation mechanism (market orders and
+transactions, not probability surveys) and are out of scope.
+
+Files used (verified against `data/manifest.csv` by size and MD5 before any
+build):
+
+| file | contents |
+|---|---|
+| `ifps.csv` | 617 questions (IFPs) with type, status, dates, resolution |
+| `survey_fcasts.yr1.csv` … `yr4.csv` | individual survey forecasts, one row per answer option |
+
+Two dataset readmes (`readme-2917338.txt`, `readme-2917350.txt`) document the
+market data and the shared field codes respectively; the second is the
+codebook for the condition and forecast-type codes summarized below.
+
+Format quirks handled at ingest: `ifps.csv` uses classic-Mac CR line endings
+and Latin-1 text (converted at the byte level, then to UTF-8); its dates are
+`m/d/y`. The survey files are quoted CSV with `NA` strings and ISO dates, and
+are loaded with explicit column types.
+
+## Question structure
+
+Each IFP carries `q_type`, and its `ifp_id` suffix encodes the same
+information (verified: the suffix distribution equals the `q_type`
+distribution):
+
+- `q_type 0` — regular binomial or multinomial (355 of 617)
+- `q_type 1–5` — conditional-IFP branches (172: 84 + 84 + 2 + 2)
+- `q_type 6` — ordered multinomial (90)
+
+`q_status` is `closed` (498) or `voided` (119); voided questions have no
+outcome and were never scored. Outcomes are option letters `a`–`e`. All 119
+missing outcomes and missing `date_closed` values belong to voided questions
+(verified). 35 closed questions lack `date_suspend`; the forecast window
+check falls back to `date_closed` for them.
+
+## Analysis question set
+
+The analysis set is **closed, non-voided, regular binary questions**
+(`q_type = 0`, `n_opts = 2`): **303 of 617 IFPs**. Exclusions, one stated
+reason per question (first matching rule wins): voided 119, ordered
+multinomial 84, conditional branch 79, multinomial 32. The same counts are
+written to `qa_accounting` and `qa/qa_report.md` by every build.
+
+Rationale: binary questions make proper-score comparisons across aggregation
+methods clean (a single probability per forecast); conditional branches score
+only under the realized condition and ordered questions need distance-aware
+scores. Both are documented exclusions, not silent drops.
+
+## Forecast structure
+
+Survey files share one 16-column layout across all four years:
+`ifp_id, ctt, cond, training, team, user_id, forecast_id, fcast_type,
+answer_option, value, fcast_date, expertise, q_status, viewtime, year,
+timestamp`. One row per answer option per forecast event; a forecast event is
+identified by (`year`, `forecast_id`, `ifp_id`, `user_id`).
+
+`fcast_type` codes: 0 new, 1 update, 2 affirm (no value change), 4 withdraw
+(values show the last standing forecast; individual scoring stops at the
+withdrawal date). Withdrawals are preserved and flagged; the scoring
+protocol (not the data layer) decides carry-forward treatment.
+
+Verified against the full build (2026-08-15): 3,143,460 source rows across
+the four files; zero exact duplicates; zero probabilities outside [0, 1];
+zero events whose option probabilities do not sum to 1; every forecast
+`ifp_id` present in `ifps.csv`. Rows on questions outside the analysis set
+account for 1,739,566 rows; the accepted set is 1,403,894 rows forming
+701,947 forecast events, every one an exact a/b pair. In the binary event
+view: 182,531 new forecasts, 396,010 updates, 115,242 affirms, 8,164
+withdrawals. Events by year: 131,882 / 95,039 / 96,388 / 378,638
+(years 1–4). Out-of-window events: 13,728 (flagged, kept; mostly years 1
+and 4).
+
+## Experimental conditions
+
+ACE assigned participants to elicitation conditions (`ctt`, with `cond` as
+its leading digit). Summarized from the dataset codebook:
+
+- `1*` — independent individuals on survey platforms (variants: no training,
+  probability training, scenario training; year-4 adds MOOF-platform and
+  accountability variants)
+- `2*` — individuals who could see crowd information (year 1)
+- `3*` — prediction-market participants
+- `4*` — teams (interacting; team id embedded in the code)
+- `5*` — superforecaster teams (top performers promoted after year 1)
+
+Consequences for analysis: team and superteam members are not independent
+crowd members (they interact and share information), market participants are
+elicited through prices rather than surveys, and the population shifts across
+years (supers extracted after year 1; conditions added and dropped). The
+**primary analysis population is condition group 1** (independent survey
+individuals), with condition-group sensitivity checks and the population
+shift stated as a limitation. Within group 1, training subconditions are
+retained as covariates rather than filtered.
+
+Verified composition of the accepted set: condition groups present in the
+survey files are 1 (671,484 rows, 6,484 users), 2 (94,374 rows, 657 users,
+year 1 only), 4 (417,254 rows, 2,592 users), and 5 (220,782 rows, 181
+users). Group 3 does not appear — market participation is recorded only in
+the `pm_*` files, as documented. The primary population contributes
+**335,742 binary forecast events from 6,484 forecasters covering all 303
+analysis questions**.
+
+## Data layer
+
+`make data` builds DuckDB tables from the verified raw files:
+
+- `questions` — all 617 IFPs with parsed dates and derived type/status flags
+- `questions_accepted` / `questions_rejected(reason)` — the analysis split
+- `forecasts` — full forecast history, all years, exact duplicate rows
+  dropped and counted
+- `forecasts_accepted(in_window)` / `forecasts_rejected(reason)` — row-level
+  split; rejection reasons are `question_not_in_analysis_set`,
+  `probability_out_of_domain`, `option_sum_not_one`
+- `binary_forecasts` — one row per accepted forecast event: `p` is the
+  probability on option `a`; `resolved_to` is 1 when the question resolved
+  `a`
+- `qa_accounting` — the exact raw = accepted + rejected accounting
+
+Out-of-window forecasts (before `date_start` or after
+`coalesce(date_suspend, date_closed)`) are flagged (`in_window`), not
+dropped: whether to score them is a protocol decision recorded in the
+methods, not a silent data-layer choice.
+
+The QA gate (`make qa`) hard-fails the build on: probabilities outside
+[0, 1] in the accepted set, accepted forecasts that do not join an accepted
+question, accepted questions without an `a`/`b` outcome, accounting-identity
+violations at either level, and binary-view row counts that do not match
+accepted event counts. Soft checks (reported, not fatal): out-of-window
+counts and unrecognized condition codes.
