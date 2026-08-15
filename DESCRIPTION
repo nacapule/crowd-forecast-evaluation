@@ -18,7 +18,6 @@ Imports:
     purrr,
     stringr,
     glue,
-    jsonlite
-Suggests:
+    jsonlite,
     testthat,
     lintr
