@@ -44,13 +44,23 @@ verify_raw <- function(manifest, dir = raw_dir()) {
 }
 
 print_fetch_instructions <- function(missing_files) {
-  cat("Missing raw files. Download them in a browser from:\n")
-  cat("  https://doi.org/10.7910/DVN/BPCDH5\n")
-  cat("(Good Judgment Project, 'GJP Data', Harvard Dataverse, CC0 1.0)\n\n")
-  cat("For survey_fcasts.yr*.csv choose the original comma-separated format\n")
-  cat("('Access File' -> 'Comma Separated Values (Original File Format)').\n")
-  cat("Place the files in data/raw/ with these names:\n")
-  for (f in missing_files) cat("  -", f, "\n")
+  gjp <- missing_files[!startsWith(missing_files, "forecastbench/")]
+  fb <- missing_files[startsWith(missing_files, "forecastbench/")]
+  if (length(gjp) > 0) {
+    cat("Missing GJP files. Download them in a browser from:\n")
+    cat("  https://doi.org/10.7910/DVN/BPCDH5\n")
+    cat("(Good Judgment Project, 'GJP Data', Harvard Dataverse, CC0 1.0.\n")
+    cat("The Dataverse blocks scripted downloads.)\n")
+    cat("For survey_fcasts.yr*.csv choose the original comma-separated format\n")
+    cat("('Access File' -> 'Comma Separated Values (Original File Format)').\n")
+    cat("Place the files in data/raw/ with these names:\n")
+    for (f in gjp) cat("  -", f, "\n")
+  }
+  if (length(fb) > 0) {
+    cat("Missing ForecastBench files. Fetch them (pinned commit) with:\n")
+    cat("  sh scripts/fetch_forecastbench.sh\n")
+    for (f in fb) cat("  -", f, "\n")
+  }
 }
 
 # Stops unless every required file is present with matching size and MD5.
