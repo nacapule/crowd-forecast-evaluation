@@ -1,14 +1,23 @@
 RSCRIPT = Rscript
 
-.PHONY: all fetch data qa test lint clean
+.PHONY: all fetch data fb scores analyze qa test lint clean
 
-all: fetch data qa test
+all: fetch data fb scores qa test
 
 fetch:
 	$(RSCRIPT) scripts/00_fetch.R
 
 data:
 	$(RSCRIPT) scripts/01_build_db.R
+
+fb:
+	$(RSCRIPT) scripts/03_build_fb.R
+
+scores:
+	$(RSCRIPT) scripts/04_scores.R
+
+analyze:
+	quarto render analysis/scoring-calibration.qmd
 
 qa:
 	$(RSCRIPT) scripts/02_qa_report.R

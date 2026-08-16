@@ -1,0 +1,11 @@
+source(file.path("R", "fetch.R"))
+source(file.path("R", "ingest.R"))
+source(file.path("R", "fb_ingest.R"))
+
+require_verified_raw()
+con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db_path())
+on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+build_fb(con)
+acct <- DBI::dbGetQuery(con, "SELECT * FROM fb_accounting")
+print(acct, row.names = FALSE)
+cat("forecastbench layer built\n")

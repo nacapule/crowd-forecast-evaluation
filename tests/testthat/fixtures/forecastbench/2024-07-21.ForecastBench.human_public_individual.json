@@ -1,0 +1,11 @@
+{
+    "organization": "synthetic",
+    "model": "human individual",
+    "question_set": "2024-07-21-human.json",
+    "forecast_due_date": "2024-07-21",
+    "forecasts": [
+        {"id": "q_data1", "source": "fred", "forecast": 0.7, "resolution_date": null, "direction": null, "user_id": "u_p1"},
+        {"id": "q_data1", "source": "fred", "forecast": 0.9, "resolution_date": null, "direction": null, "user_id": "u_p1"},
+        {"id": "q_data2", "source": "acled", "forecast": 0.2, "resolution_date": null, "direction": null, "user_id": "u_p2"}
+    ]
+}

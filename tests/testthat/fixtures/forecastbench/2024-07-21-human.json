@@ -1,0 +1,27 @@
+{
+    "forecast_due_date": "2024-07-21",
+    "question_set": "2024-07-21-human.json",
+    "questions": [
+        {
+            "id": "q_data1",
+            "source": "fred",
+            "question": "Will the synthetic index exceed its freeze value?",
+            "resolution_criteria": "synthetic",
+            "background": "synthetic fixture"
+        },
+        {
+            "id": "q_data2",
+            "source": "acled",
+            "question": "Will the synthetic event count increase?",
+            "resolution_criteria": "synthetic",
+            "background": "synthetic fixture"
+        },
+        {
+            "id": "q_mkt1",
+            "source": "manifold",
+            "question": "Will the synthetic market resolve yes?",
+            "resolution_criteria": "synthetic",
+            "background": "synthetic fixture"
+        }
+    ]
+}

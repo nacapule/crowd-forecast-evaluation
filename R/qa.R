@@ -80,6 +80,44 @@ run_qa_checks <- function(con) {
     "flagged only; the scoring protocol decides treatment"
   )
 
+  if (DBI::dbExistsTable(con, "fb_binary")) {
+    checks$fb_domain <- qa_check(
+      "fb_probability_and_resolution_domain", hard = TRUE,
+      count1(con,
+        "SELECT count(*) FROM fb_binary
+         WHERE p < 0 OR p > 1 OR resolved_to NOT IN (0.0, 1.0)"),
+      "scored ForecastBench rows have valid p and 0/1 resolutions"
+    )
+    checks$fb_nonempty <- qa_check(
+      "fb_binary_nonempty", hard = TRUE,
+      as.integer(count1(con, "SELECT count(*) FROM fb_binary") == 0),
+      "the ForecastBench scored set must not be empty"
+    )
+    checks$fb_sources <- qa_check(
+      "fb_scored_sources_are_dataset_type", hard = TRUE,
+      count1(con,
+        "SELECT count(*) FROM fb_binary WHERE source_type <> 'dataset'"),
+      "market-proxy resolutions are excluded from the scored set"
+    )
+  }
+
+  if (DBI::dbExistsTable(con, "gjp_user_question_scores")) {
+    checks$score_domain <- qa_check(
+      "gjp_scores_within_brier_range", hard = TRUE,
+      count1(con,
+        "SELECT count(*) FROM gjp_user_question_scores
+         WHERE mean_daily_brier < 0 OR mean_daily_brier > 2
+            OR days_held <= 0"),
+      "day-weighted Brier scores lie in [0, 2] with positive day counts"
+    )
+    checks$events_labeled <- qa_check(
+      "gjp_events_all_have_cohorts", hard = TRUE,
+      count1(con,
+        "SELECT count(*) FROM gjp_events WHERE cohort IS NULL"),
+      "every scored event carries an analysis cohort label"
+    )
+  }
+
   checks$unknown_ifp_ids <- qa_check(
     "forecast_ifp_ids_absent_from_questions", hard = FALSE,
     count1(con,
