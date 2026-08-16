@@ -1,7 +1,11 @@
 # ForecastBench ingest: 2024-07-21 human round -> DuckDB.
 #
-# Humans forecast each question once (by the due date); the benchmark then
-# scores that single forecast at several later resolution dates (horizons).
+# A forecaster answers each dataset question once per resolution horizon: the
+# round sets eight horizon dates and the forecast files carry one entry per
+# (forecaster, question, resolution_date). Entries with no resolution date
+# belong to the market-sourced questions, which resolve on their own schedule.
+# Horizon is therefore part of the forecast key, not a fan-out of one value.
+#
 # Market-sourced questions that have not resolved by a horizon are scored
 # upstream against the market price at that date — a continuous proxy, not
 # an outcome — so the analysis here keeps only dataset-source questions
@@ -60,6 +64,7 @@ read_fb_forecasts <- function(path, cohort) {
     source = fc$source,
     p = as.numeric(fc$forecast),
     due_date = due_date,
+    resolution_date = as.Date(fc$resolution_date),
     stringsAsFactors = FALSE
   )
 }
@@ -93,15 +98,21 @@ build_fb <- function(con, dir = fb_dir()) {
   DBI::dbWriteTable(con, "fb_resolutions", resolutions, overwrite = TRUE)
   DBI::dbWriteTable(con, "fb_forecasts_raw", forecasts, overwrite = TRUE)
 
-  # A forecaster occasionally submits several values for one question; with
-  # no timestamps in the file, the mean is used and the case is counted.
+  # One row per (forecaster, question, horizon). Entries without a resolution
+  # date are the market-question submissions; a few hundred public entries
+  # sit just outside [0, 1] (rounding artefacts such as -0.05 or 1.02). Both
+  # are dropped here and counted below. The group-by is a guard rather than a
+  # policy: this round holds no duplicate keys, and any that appeared would
+  # be averaged and reported by `duplicate_horizon_entries_collapsed`.
   DBI::dbExecute(con,
     "CREATE OR REPLACE TABLE fb_forecasts AS
-     SELECT cohort, user_id, question_id, min(source) AS source,
-            min(due_date) AS due_date,
-            avg(p) AS p, count(*) AS n_submissions
+     SELECT cohort, user_id, question_id, resolution_date,
+            min(source) AS source, min(due_date) AS due_date,
+            avg(p) AS p, count(*) AS n_entries
      FROM fb_forecasts_raw
-     GROUP BY cohort, user_id, question_id"
+     WHERE resolution_date IS NOT NULL
+       AND p IS NOT NULL AND p >= 0 AND p <= 1
+     GROUP BY cohort, user_id, question_id, resolution_date"
   )
 
   DBI::dbExecute(con,
@@ -113,11 +124,10 @@ build_fb <- function(con, dir = fb_dir()) {
        date_diff('day', f.due_date, r.resolution_date) AS horizon_days
      FROM fb_forecasts f
      JOIN fb_questions q USING (question_id)
-     JOIN fb_resolutions r USING (question_id)
+     JOIN fb_resolutions r USING (question_id, resolution_date)
      WHERE q.source_type = 'dataset'
        AND r.resolved
-       AND r.resolved_to IN (0.0, 1.0)
-       AND f.p IS NOT NULL AND f.p >= 0 AND f.p <= 1"
+       AND r.resolved_to IN (0.0, 1.0)"
   )
 
   DBI::dbExecute(con, "DROP TABLE IF EXISTS fb_accounting")
@@ -137,10 +147,17 @@ build_fb <- function(con, dir = fb_dir()) {
        sum(questions$source_type == "market"))
   acct("question", "dataset_kept",
        sum(questions$source_type == "dataset"))
-  acct("forecast_row", "source_rows", nrow(forecasts))
-  acct("forecast_row", "multi_submission_collapsed",
+  acct("forecast_row", "source_entries", nrow(forecasts))
+  acct("forecast_row", "market_question_entries",
+       sum(is.na(forecasts$resolution_date)))
+  acct("forecast_row", "probability_out_of_domain",
+       sum(!is.na(forecasts$resolution_date) &
+             (is.na(forecasts$p) | forecasts$p < 0 | forecasts$p > 1)))
+  acct("forecast_row", "horizon_entries_kept",
+       DBI::dbGetQuery(con, "SELECT count(*) FROM fb_forecasts")[[1]])
+  acct("forecast_row", "duplicate_horizon_entries_collapsed",
        DBI::dbGetQuery(con,
-         "SELECT count(*) FROM fb_forecasts WHERE n_submissions > 1")[[1]])
+         "SELECT coalesce(sum(n_entries - 1), 0) FROM fb_forecasts")[[1]])
   acct("forecast_row", "scored_rows_binary",
        DBI::dbGetQuery(con, "SELECT count(*) FROM fb_binary")[[1]])
   invisible(TRUE)
