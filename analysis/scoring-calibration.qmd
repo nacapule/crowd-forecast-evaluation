@@ -69,11 +69,11 @@ questions unresolved at a horizon are scored upstream against the market
 price — a proxy, not an outcome — so this analysis keeps only dataset-source
 questions (ACLED, DBnomics, FRED, Wikipedia, Yahoo Finance) with genuine 0/1
 resolutions. Of the round's 200 questions, 110 are dataset-sourced and 105 of
-those carry a resolution, giving 521 resolved question-horizons; a horizon
-the round's resolution set does not reach — the furthest run to 2034 — has
-nothing to score against. A few hundred public submissions sit just outside
-$[0,1]$ (values such as $-0.05$ or $1.02$); they are dropped and counted
-rather than clamped. Every exclusion is a counted row in `qa/qa_report.md`,
+those carry a resolution, giving 521 resolved question-horizons. The round's
+resolution set reaches five of its eight horizons; forecasts aimed at 2027,
+2029 and 2034 have nothing yet to score against. A few hundred public
+submissions sit just outside $[0,1]$ (values such as $-0.05$ or $1.02$); they
+are dropped and counted rather than clamped. Every exclusion is a counted row in `qa/qa_report.md`,
 and a hard check requires the counts to close against the tables.
 
 ## Corpus and cohorts
@@ -391,6 +391,11 @@ train <- q("
     GROUP BY 1, 2)
   SELECT ctt, avg(q_score) AS b FROM per_q GROUP BY ctt ORDER BY ctt")
 train_gain <- (train$b[1] - train$b[2]) / train$b[1]
+cohort_order <- q("
+  WITH per_q AS (
+    SELECT cond, ifp_id, avg(mean_daily_brier) AS q_score
+    FROM gjp_user_question_scores WHERE cond IN (1, 4, 5) GROUP BY 1, 2)
+  SELECT cond, avg(q_score) AS b FROM per_q GROUP BY cond")
 
 recon <- data.frame(
   anchor = c(
@@ -413,7 +418,10 @@ recon <- data.frame(
             fb_mine$qfirst_b[fb_mine$cohort == "fb_public"]),
     sprintf("%.1f%% (untrained 1a %.3f vs trained 1b %.3f)",
             100 * train_gain, train$b[1], train$b[2]),
-    "0.168 < 0.294 < 0.385 (two-option scale)"
+    sprintf("%.3f < %.3f < %.3f (two-option scale, all of cond 1)",
+            cohort_order$b[cohort_order$cond == 5],
+            cohort_order$b[cohort_order$cond == 4],
+            cohort_order$b[cohort_order$cond == 1])
   )
 )
 knitr::kable(recon, col.names = c("anchor", "published", "ours"))

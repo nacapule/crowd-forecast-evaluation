@@ -1,8 +1,12 @@
 # Data notes — Good Judgment Project ACE surveys
 
-Working notes for the data layer; drafted to become the data section of the
-write-up. Counts below are produced by the pipeline (`make data && make qa`)
-and reconciled against `qa/qa_report.md`.
+Build-level reference for the data layer: source schemas, file-format quirks,
+exclusion rules, and the DuckDB tables each `make` target produces. The
+write-up in `analysis/manuscript.pdf` is the canonical statement of the
+scoring protocols and the results; this file is what you read when you need
+to know how a table was built. Counts below are produced by the pipeline
+(`make data && make fb && make qa`) and reconciled against
+`qa/qa_report.md`.
 
 ## Source
 

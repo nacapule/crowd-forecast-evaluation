@@ -71,14 +71,19 @@ best_gjp <- crowd_only[which.min(crowd_only$mean_brier), ]
 worst_gjp <- crowd_only[which.max(crowd_only$mean_brier), ]
 ind_gjp <- gjp[gjp$rule == "individual forecaster", ]
 
-# How far aggregating at all outruns picking the best rule, per cohort: the
-# step from the average member to the weakest rule, against the step from the
-# weakest rule to the best.
+# The value of pooling at all against the value of pooling well: the step
+# from the average member to a plain mean, over the step from a plain mean to
+# the best rule. Anchored on the mean rather than on the weakest rule in the
+# field, so it does not depend on which rules were entered.
 step_ratio <- function(coh) {
   df <- results[results$cohort == coh, ]
   ind <- df$mean_brier[df$rule == "individual forecaster"]
-  rules <- df$mean_brier[df$rule != "individual forecaster"]
-  (ind - max(rules)) / (max(rules) - min(rules))
+  plain <- df$mean_brier[df$rule == "mean"]
+  best <- min(df$mean_brier[df$rule != "individual forecaster"])
+  (ind - plain) / (plain - best)
+}
+plain_mean <- function(coh) {
+  results$mean_brier[results$cohort == coh & results$rule == "mean"]
 }
 ```
 
@@ -89,11 +94,16 @@ This note asks the other half of the question: pooled into a crowd, how much
 better do they get, and which pooling rule survives being tuned on one part
 of the data and applied to another.
 
-Nine aggregation rules run against the same forecasts. Four are taken from
+Nine aggregation rules run against the same forecasts. Three are taken from
 `aggutils`, the reference implementation of the trimming and extremizing
-methods published in Powell et al. (2022) and Neyman & Roughgarden (2021);
-the rest are implemented here, with unit tests that check the two agree
-wherever they overlap.
+methods published in Powell et al. (2024) and Neyman & Roughgarden (2022);
+the other six are implemented here, with unit tests that check the two agree
+wherever they overlap. The softened mean is among the six for a specific
+reason: `aggutils::soften_mean` takes its input on the 0-100 scale but
+compares the mean against 0.5 rather than 50, so it trims the upper tail of
+any crowd averaging above half a percent, including crowds that lean low.
+What runs here is the rule as the package documents it, with that threshold
+corrected and nothing else changed.
 
 ## Protocol
 
@@ -264,12 +274,13 @@ On the GJP evaluation years the best rule scores
 crowd on the same days — a reduction of
 `r sprintf("%.0f%%", 100 * (1 - best_gjp$mean_brier / ind_gjp$mean_brier))`,
 with the paired interval well clear of zero. That is the wisdom-of-crowds
-effect at full strength, and most of it needs no cleverness: the weakest rule
-in the field, the plain mean, already takes the score to
-`r sprintf("%.3f", worst_gjp$mean_brier)`, and going from there to the best
-rule is worth a further `r sprintf("%.3f", worst_gjp$mean_brier - best_gjp$mean_brier)`.
-Aggregating at all is the larger step, by a factor of about
-`r sprintf("%.1f", step_ratio(best_gjp$cohort))` — not by an order of
+effect at full strength, and most of it needs no cleverness: the plain mean,
+the most obvious rule available, already takes the score to
+`r sprintf("%.3f", plain_mean(best_gjp$cohort))`, and going from there to the
+best rule is worth a further
+`r sprintf("%.3f", plain_mean(best_gjp$cohort) - best_gjp$mean_brier)`.
+Pooling at all is the larger step, by a factor of
+`r sprintf("%.1f", step_ratio(best_gjp$cohort))` — not a different order of
 magnitude. The choice of rule earns its keep; it just earns less than the
 decision to pool.
 
@@ -381,24 +392,25 @@ The ordering matches what the aggregation literature reports: pooling in log
 odds beats pooling probabilities in all three cohorts, trimming beats the raw
 mean in all three, and extremized and skill-selected crowds sit at the top on
 the corpus they were tuned on (Satopää et al. 2014; Mellers et al. 2014;
-Powell et al. 2022; Neyman & Roughgarden 2021). Select-crowd finishing behind
-the extremized aggregate rather than ahead of it is the expected result at
-this crowd size: with `r sprintf("%s", settings$select_k)` forecasters
-selected out of hundreds, the rule trades noise reduction for skill, and the
-two roughly cancel.
+Powell et al. 2024; Neyman & Roughgarden 2022). Select-crowd sits ahead of
+every non-extremizing rule and behind both extremizing ones, which is what to
+expect at this crowd size: with `r sprintf("%s", settings$select_k)`
+forecasters kept out of hundreds, selecting on skill buys less than
+extremizing buys from the whole crowd's cancelled noise.
 
-How far aggregating outruns rule choice depends on the pool. Measured as the
-step from the average member to the weakest rule against the step from the
-weakest rule to the best, it is
-`r sprintf("%.1f", step_ratio(best_gjp$cohort))` on the GJP independents and
-`r sprintf("%.1f", step_ratio("fb_public"))` on the ForecastBench public
-crowd — pooling is the bigger lever in both, though by a factor of about two
-rather than an order of magnitude. On the supers the ratio is
-`r sprintf("%.1f", step_ratio("fb_super"))`: the whole cohort is close enough
-to the aggregate that the rules are spread further apart than the aggregate
-is from a typical member, and every one of those gaps is smaller than its
-own interval. Aggregation buys the most where the individuals disagree the
-most, which is the mechanism, not an incidental finding.
+How far pooling outruns rule choice depends on the pool. Measured as the step
+from the average member to a plain mean, over the step from that mean to the
+best rule, it is `r sprintf("%.1f", step_ratio(best_gjp$cohort))` on the GJP
+independents, `r sprintf("%.1f", step_ratio("fb_public"))` on the
+ForecastBench public crowd, and
+`r sprintf("%.1f", step_ratio("fb_super"))` on the supers. Pooling is the
+bigger lever in all three, and by the widest margin on the public crowd,
+whose members are furthest behind their own aggregate. The supers are the
+narrow case: the whole field of rules spans
+`r sprintf("%.3f", diff(range(results$mean_brier[results$cohort == "fb_super" & results$rule != "individual forecaster"])))`
+and every gap in it is smaller than its own interval. Aggregation buys the
+most where the individuals disagree the most, which is the mechanism, not an
+incidental finding.
 
 Scores here are raw Brier throughout, on the two-option scale. The
 ForecastBench leaderboard's published figures are difficulty-adjusted and

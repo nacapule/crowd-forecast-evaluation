@@ -77,7 +77,8 @@ run_qa_checks <- function(con) {
     "forecasts_outside_question_window", hard = FALSE,
     count1(con,
       "SELECT count(*) FROM forecasts_accepted WHERE NOT in_window"),
-    "flagged only; the scoring protocol decides treatment"
+    "counted in source rows, so two per forecast event; flagged only, and
+     the scoring protocol decides treatment"
   )
 
   if (DBI::dbExistsTable(con, "fb_binary")) {

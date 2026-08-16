@@ -1,8 +1,13 @@
 RSCRIPT = Rscript
 
-.PHONY: all fetch data fb scores experiments analyze qa test lint clean
+.PHONY: all setup fetch data fb scores experiments analyze manuscript qa test \
+        lint clean
 
 all: fetch data fb scores experiments qa test
+
+# Once per clone: install the locked dependencies into the project library.
+setup:
+	$(RSCRIPT) -e 'renv::restore(prompt = FALSE)'
 
 fetch:
 	$(RSCRIPT) scripts/00_fetch.R

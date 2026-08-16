@@ -12,14 +12,15 @@ abstract: |
   accuracy and calibration are measured under precisely stated protocols, and
   nine aggregation rules are then compared out of sample, with every free
   parameter tuned on the first two tournament years and frozen before
-  evaluation on the last two and on the modern round. Aggregating is worth far
-  more than choosing how to aggregate: on the held-out years the best rule
-  scores 0.204 against 0.422 for the average member of the same crowd on the
-  same days, while the spread across rules is 0.086. Log-odds extremizing wins
-  on the tournament data and keeps improving as the crowd grows, where the
-  simple mean saturates near twenty-five forecasters. It does not travel: the
-  same constant ranks seventh of eight on ForecastBench's public crowd, which
-  is overconfident where the tournament's independents are underconfident.
+  evaluation on the last two and on the modern round. Pooling at all is worth
+  more than pooling well: on the held-out years the best rule scores 0.204
+  against 0.422 for the average member of the same crowd on the same days,
+  while the step from a plain mean to that best rule is worth 0.086. Log-odds
+  extremizing wins on the tournament data and keeps improving as the crowd
+  grows, past the point where the simple mean saturates near twenty-five
+  forecasters. It does not travel: the same constant is last of eight on
+  ForecastBench's public crowd, which is overconfident where the tournament's
+  independents are underconfident.
   Extremizing constants are properties of a forecaster pool rather than of
   aggregation in general. The scored ForecastBench set reproduces the
   benchmark leaderboard's 521 question-horizons exactly, and the residual gap
@@ -119,10 +120,13 @@ cohort_label <- c(
 )
 results$panel <- factor(unname(cohort_label[results$cohort]),
                         levels = unname(cohort_label))
+sweep$family <- sub("[@0-9.]*$", "", sub("_k[0-9]+$", "_k", sweep$rule))
+sweep$value <- suppressWarnings(as.numeric(
+  ifelse(grepl("@", sweep$rule), sub("^.*@", "", sweep$rule),
+         sub("^select_crowd_k", "", sweep$rule))))
 gjp <- results[results$corpus == "gjp", ]
 crowd_only <- gjp[gjp$rule != "individual forecaster", ]
 best_gjp <- crowd_only[which.min(crowd_only$mean_brier), ]
-worst_gjp <- crowd_only[which.max(crowd_only$mean_brier), ]
 ind_gjp <- gjp[gjp$rule == "individual forecaster", ]
 
 rank_in <- function(coh, rule) {
@@ -137,13 +141,24 @@ best_in <- function(coh) {
 }
 n_rules <- sum(results$cohort == "fb_public" &
                  results$rule != "individual forecaster")
-# How far aggregating at all outruns picking the best rule: the step from the
-# average member to the weakest rule, against the spread among the rules.
+# The value of pooling at all against the value of pooling well: the step
+# from the average member to a plain mean, over the step from a plain mean to
+# the best rule. Anchored on the mean rather than on the weakest rule in the
+# field, so the comparison does not depend on which rules were entered.
 step_ratio <- function(coh) {
   df <- results[results$cohort == coh, ]
   ind <- df$mean_brier[df$rule == "individual forecaster"]
-  rules <- df$mean_brier[df$rule != "individual forecaster"]
-  (ind - max(rules)) / (max(rules) - min(rules))
+  plain <- df$mean_brier[df$rule == "mean"]
+  best <- min(df$mean_brier[df$rule != "individual forecaster"])
+  (ind - plain) / (plain - best)
+}
+rule_span <- function(coh) {
+  b <- results$mean_brier[results$cohort == coh &
+                            results$rule != "individual forecaster"]
+  max(b) - min(b)
+}
+plain_mean <- function(coh) {
+  results$mean_brier[results$cohort == coh & results$rule == "mean"]
 }
 
 # The abstract sits in the YAML header, where inline R does not run, so its
@@ -152,8 +167,8 @@ step_ratio <- function(coh) {
 stopifnot(
   f3(best_gjp$mean_brier) == "0.204",
   f3(ind_gjp$mean_brier) == "0.422",
-  f3(worst_gjp$mean_brier - best_gjp$mean_brier) == "0.086",
-  rank_in("fb_public", "extremized") == 7,
+  f3(plain_mean(best_gjp$cohort) - best_gjp$mean_brier) == "0.086",
+  rank_in("fb_public", "extremized") == 8,
   n_rules == 8,
   n1("SELECT count(DISTINCT question_id || resolution_date) FROM fb_binary")
     == 521
@@ -188,18 +203,18 @@ What is harder to find is a clean statement of how much any of this is
 worth relative to the decision to aggregate at all, measured against a
 baseline drawn from exactly the same population on exactly the same days,
 with every free parameter frozen before the evaluation data is touched. That
-is what this paper reports. Two corpora are used, thirteen years apart, so
+is what this paper reports. Two corpora are used, roughly a decade apart, so
 that a rule tuned on the first can be checked against the second without
 re-tuning.
 
-Three findings. Aggregating is the larger decision by a factor of about two
-on both non-expert crowds, but not by an order of magnitude — the choice of
-rule earns its keep, it just earns less than the choice to pool. Extremizing
-wins on the tournament data and keeps gaining as the crowd grows, exactly
-where the plain mean stops. And it does not transfer: the constant tuned on
-the tournament's independent forecasters is near the back of the field on
-ForecastBench's public crowd, for a reason visible in the calibration
-diagrams of both.
+Three findings. Pooling at all is a larger decision than pooling well on
+every cohort here, though the margin ranges from about one and a half times
+to nearly six; the choice of rule earns its keep, it just earns less than the
+choice to pool. Extremizing wins on the tournament data and keeps gaining as
+the crowd grows, past the point where the plain mean saturates. And it does
+not transfer: the constant tuned on the tournament's independent forecasters
+is last of eight on ForecastBench's public crowd, for a reason visible in the
+calibration diagrams of both.
 
 Everything here is reproducible from a public repository: raw files verified
 by checksum, a build that fails on any of `r n_hard` hard data invariants,
@@ -403,15 +418,23 @@ within a cohort.
 
 ## The aggregation rules
 
-Nine rules, listed in @tbl-rules. Four delegate to `aggutils` [@aggutils],
+Nine rules, listed in @tbl-rules. Three delegate to `aggutils` [@aggutils],
 the reference implementation of the trimming and extremizing methods; that
 package works on the 0–100 percentage scale, so the wrappers convert on the
-way in and out. The other five are implemented directly. Unit tests
-cross-check every wrapper against an independent reimplementation — the
-symmetric trimmed mean at every crowd size from 1 to 12, the Neyman
-crowd-size factor against its published formula, and the highest-density
-trimmed mean against a shortest-interval implementation — so the package is
-used as a reference rather than trusted blindly.
+way in and out. The other six are implemented here. Unit tests cross-check
+the two against each other on every rule they share: the symmetric trimmed
+mean at every crowd size from 1 to 12, the geometric mean of odds, the
+highest-density trimmed mean against a shortest-interval implementation, and
+the Neyman crowd-size factor against its published formula.
+
+One rule is implemented here rather than delegated, for a reason worth
+recording. `aggutils::soften_mean` takes its input on the 0–100 scale but
+compares the mean against 0.5 rather than 50, so it trims the upper tail of
+any crowd averaging above half a percent — including crowds that lean low,
+which it then pushes further from 50 instead of back toward it. What is used
+here is the rule as the package's own documentation defines it, correcting
+that threshold and nothing else. The two agree on every crowd above 50%, and
+a unit test pins the divergence below.
 
 ```{r}
 #| label: tbl-rules
@@ -572,7 +595,8 @@ flattens above 50%: high probabilities are not matched by outcomes, which is
 overconfidence. The GJP cohorts sit below the diagonal across the upper half
 in the opposite direction — they overestimate the probability of the
 non-status-quo option, which is the familiar overprediction of change, and
-in this question set the status quo won
+in this question set option `b`, which for most questions is the status-quo
+option, won
 `r num(n1("SELECT count(*) FROM questions_accepted WHERE outcome = 'b'"))`
 of `r num(n1("SELECT count(*) FROM questions_accepted"))` times.
 
@@ -650,24 +674,32 @@ kbl(murphy, digits = 3,
 
 ## Tuning
 
-@tbl-tuning gives the frozen parameters. Every one is an interior minimum of
-its grid; the first grid put three families on a boundary and was widened
-once, before any evaluation-year data was read. Extremizing has a clear
-optimum at `r sprintf("a = %.2g", settings$extremize_a)`: pushing the pooled
-log odds outward helps, and past that point the crowd becomes overconfident.
-The trimming families keep improving until they discard roughly
-`r pct(settings$trim)` from each side, which is close to behaving like a
-median — consistent with trimming's usual role of removing confident tails
-rather than reshaping the middle.
+@tbl-tuning gives the frozen parameters. Four of the five are interior
+minima of their grids; the first grid put three families on a boundary and
+was widened once, before any evaluation-year data was read. Extremizing has a
+clear optimum at `r sprintf("a = %.2g", settings$extremize_a)`: pushing the
+pooled log odds outward helps, and past that point the crowd becomes
+overconfident. The trimming families keep improving until they discard
+roughly `r pct(settings$trim)` from each side, which is close to behaving
+like a median, consistent with trimming's usual role of removing confident
+tails rather than reshaping the middle.
+
+The softened mean is the exception, and no wider grid would fix it. Its
+tuning-year score rises monotonically with the softening fraction, from
+`r f3(min(sweep$brier[sweep$family == "soften_mean"]))` at the smallest value
+searched to `r f3(max(sweep$brier[sweep$family == "soften_mean"]))` at the
+largest, so the tuner takes the smallest and would take a smaller one if
+offered — and the limit of the family as the fraction goes to zero is the
+plain mean. The rule was designed for crowds that hold overconfident members
+[@powell2024]; the GJP independents are collectively underconfident, so
+pulling their aggregate back toward 50% is the wrong correction, and the
+tuner is telling us to apply as little of it as the grid allows. The frozen
+value is reported as what it is, a boundary, rather than smoothed over.
 
 ```{r}
 #| label: tbl-tuning
 #| tbl-cap: "Parameters chosen on GJP years 1-2 and frozen before any
 #|   evaluation data was scored."
-sweep$family <- sub("[@0-9.]*$", "", sub("_k[0-9]+$", "_k", sweep$rule))
-sweep$value <- suppressWarnings(as.numeric(
-  ifelse(grepl("@", sweep$rule), sub("^.*@", "", sweep$rule),
-         sub("^select_crowd_k", "", sweep$rule))))
 chosen <- data.frame(
   family = c("trimmed_mean", "hd_trim", "soften_mean", "extremized",
              "select_crowd_k"),
@@ -677,7 +709,7 @@ tune_tbl <- merge(chosen, sweep, by = c("family", "value"))
 tune_tbl$grid <- vapply(tune_tbl$family, function(f) {
   paste(sort(sweep$value[sweep$family == f]), collapse = ", ")
 }, character(1))
-tune_tbl$frozen <- format(tune_tbl$value, trim = TRUE)
+tune_tbl$frozen <- vapply(tune_tbl$value, format, character(1))
 kbl(tune_tbl[, c("family", "grid", "frozen", "brier")],
              digits = 3,
              col.names = c("family", "grid searched", "frozen",
@@ -715,15 +747,18 @@ ggplot(plot_df, aes(mean_brier, label, color = is_baseline)) +
 
 On the held-out GJP years the best rule scores
 `r f3(best_gjp$mean_brier)` against `r f3(ind_gjp$mean_brier)` for the
-average member of the same crowd on the same days — a reduction of
-`r pct(1 - best_gjp$mean_brier / ind_gjp$mean_brier)`. Most of it needs no
-cleverness. The weakest rule in the field, the plain mean, already reaches
-`r f3(worst_gjp$mean_brier)`; going from there to the best rule is worth a
-further `r f3(worst_gjp$mean_brier - best_gjp$mean_brier)`. Measured as the
-step from the average member to the weakest rule against the spread among
-the rules, aggregating is the larger decision by a factor of
-`r sprintf("%.1f", step_ratio(best_gjp$cohort))` — not by an order of
-magnitude.
+average member of the same crowd on the same days, a reduction of
+`r pct(1 - best_gjp$mean_brier / ind_gjp$mean_brier)`. Most of that needs no
+cleverness: the plain mean, the most obvious rule available, already reaches
+`r f3(plain_mean(best_gjp$cohort))`, and going from there to the best rule is
+worth a further
+`r f3(plain_mean(best_gjp$cohort) - best_gjp$mean_brier)`. Setting the two
+steps against each other — the average member to a plain mean, then the plain
+mean to the best rule — pooling is the larger by a factor of
+`r sprintf("%.1f", step_ratio(best_gjp$cohort))`. It is the larger step, not
+a different order of magnitude. The ratio is stated against the plain mean
+rather than against the weakest rule in the field, so that it does not depend
+on which rules happened to be entered.
 
 ```{r}
 #| label: tbl-gain
@@ -769,13 +804,19 @@ kbl(gain, digits = 3,
 
 The same ratio is `r sprintf("%.1f", step_ratio("fb_public"))` on the
 ForecastBench public crowd and `r sprintf("%.1f", step_ratio("fb_super"))` on
-the superforecasters. The supers are the interesting case: the cohort is
-close enough to its own aggregate that the rules are spread further apart
-than the aggregate is from a typical member, and every one of those gaps is
-smaller than its own interval. Aggregation buys the most where the
-individuals disagree the most. That is the mechanism, not an incidental
-finding, and it is the reason a rule comparison run only on expert crowds
-would understate what aggregation does for everyone else.
+the superforecasters, so pooling is the larger step in all three. The public
+crowd is the extreme case: its `r n_rules` rules fall within
+`r f3(rule_span("fb_public"))` of each other while the average member sits
+`r f3(results$mean_brier[results$cohort == "fb_public" & results$rule == "individual forecaster"] - plain_mean("fb_public"))`
+behind the plain mean. The superforecasters are the other end. There the
+whole field spans `r f3(rule_span("fb_super"))` and the best aggregate is
+only
+`r f3(results$mean_brier[results$cohort == "fb_super" & results$rule == "individual forecaster"] - min(results$mean_brier[results$cohort == "fb_super" & results$rule != "individual forecaster"]))`
+better than a typical member, and every one of those gaps is smaller than its
+own interval. Aggregation buys the most where the individuals disagree the
+most, which is the mechanism rather than an incidental finding, and it is why
+a rule comparison run only on expert crowds would understate what aggregation
+does for everyone else.
 
 ## Crowd size
 
@@ -829,8 +870,8 @@ left over from thinning the days.
 ## The extremizing constant does not transfer {#sec-transfer}
 
 The constant tuned on GJP is worth
-`r f3(worst_gjp$mean_brier - best_gjp$mean_brier)` against the plain mean
-there, and costs accuracy on the modern round. On the ForecastBench
+`r f3(plain_mean(best_gjp$cohort) - best_gjp$mean_brier)` against the plain
+mean there, and costs accuracy on the modern round. On the ForecastBench
 superforecasters the extremized rule is near the front and near-identical to
 untuned pooling in log odds. On the public cohort it finishes
 `r rank_in("fb_public", "extremized")`th of `r n_rules`, behind even the plain
