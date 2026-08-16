@@ -148,3 +148,22 @@ test_that("forecastbench crowd scores match a hand-computed median", {
   expect_equal(row$brier, brier_score(0.8, 1))
   expect_setequal(unique(s$cohort), c("fb_public", "fb_super"))
 })
+
+test_that("results do not depend on the panel's stored row order", {
+  con <- build_aggregation_db()
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  fns <- list(median = agg_median)
+  before_curve <- crowd_size_curve(con, fns, years = 1L, sizes = c(1, 2, 5),
+                                   reps = 3L)
+  before_scores <- crowd_scores_gjp(con, fns, years = 1L, select_ks = 2)
+
+  DBI::dbExecute(con,
+    "CREATE OR REPLACE TABLE gjp_panel AS
+     SELECT * FROM gjp_panel ORDER BY random()")
+
+  expect_equal(crowd_size_curve(con, fns, years = 1L, sizes = c(1, 2, 5),
+                                reps = 3L),
+               before_curve)
+  expect_equal(crowd_scores_gjp(con, fns, years = 1L, select_ks = 2),
+               before_scores)
+})

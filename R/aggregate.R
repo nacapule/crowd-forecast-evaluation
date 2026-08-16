@@ -64,7 +64,12 @@ agg_soften_mean <- function(p, trim = 0.1) {
 # Neyman extremized aggregate (Neyman & Roughgarden 2021): pooled log odds
 # extremized by a factor derived from the crowd size, so it has no free
 # parameter to tune.
+#
+# The crowd-size factor is exactly 1 for a lone forecast, which makes the rule
+# the identity there — and aggutils' zero/one handling only engages for two or
+# more values, so a lone p = 1 would otherwise round-trip to NaN.
 agg_neyman <- function(p) {
+  if (length(p) < 2) return(clamp_p(p))
   aggutils::neymanAggCalc(100 * p) / 100
 }
 

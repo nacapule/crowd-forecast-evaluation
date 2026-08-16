@@ -14,7 +14,7 @@
 "select_crowd_k10",0.23309
 "select_crowd_k20",0.239056
 "select_crowd_k40",0.24137
-"select_crowd_k5",0.247496
+"select_crowd_k5",0.24778
 "select_crowd_k80",0.253707
 "soften_mean@0.05",0.298212
 "soften_mean@0.10",0.289121

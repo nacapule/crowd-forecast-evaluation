@@ -59,3 +59,17 @@ test_that("bootstrap_questions resamples by question with a stable seed", {
   expect_true(b1["low"] >= 1 && b1["high"] <= 3)
   expect_true(b1["low"] < 2 && b1["high"] > 2)
 })
+
+test_that("the question bootstrap does not depend on input row order", {
+  per_q <- data.frame(
+    question_id = sprintf("q%02d", 1:40),
+    brier = seq(0.05, 0.95, length.out = 40)
+  )
+  stat <- function(df) mean(df$brier)
+  # Shuffle outside the call: an inline sample() would be forced lazily,
+  # after the function seeds the generator, and shift the draw sequence.
+  reordered <- per_q[sample(nrow(per_q)), ]
+  straight <- bootstrap_questions(per_q, stat, reps = 200)
+  shuffled <- bootstrap_questions(reordered, stat, reps = 200)
+  expect_equal(straight, shuffled)
+})

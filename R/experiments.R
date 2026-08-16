@@ -41,6 +41,11 @@ assert_tuning_only <- function(scores) {
 # carries the forecaster's trailing accuracy as of that day, taken from the
 # most recent question that resolved strictly before it — the ASOF join on
 # `day > resolved_on` is what keeps select-crowd from seeing its own future.
+#
+# The panel is ordered down to user_id, not just (question, day). The rules
+# themselves do not care about order, but the crowd-size curve draws by row
+# position within a day, so an unordered panel would hand the same seed a
+# different subcrowd on every rebuild.
 build_gjp_panel <- function(con, min_history = select_min_history()) {
   DBI::dbExecute(con,
     "CREATE OR REPLACE TABLE gjp_question_year AS
@@ -88,7 +93,7 @@ build_gjp_panel <- function(con, min_history = select_min_history()) {
      JOIN gjp_question_year y USING (ifp_id)
      ASOF LEFT JOIN gjp_trailing t
        ON r.user_id = t.user_id AND r.day > t.resolved_on
-     ORDER BY r.ifp_id, r.day", min_history
+     ORDER BY r.ifp_id, r.day, r.user_id", min_history
   ))
   DBI::dbExecute(con, "DROP TABLE gjp_panel_raw")
   invisible(TRUE)
@@ -158,7 +163,8 @@ crowd_scores_gjp <- function(con, fns, years, select_ks = numeric(0),
   per_chunk <- lapply(parts, function(batch) {
     rows <- DBI::dbGetQuery(con, sprintf(
       "SELECT ifp_id, q_year, day, p, resolved_to, trailing_score
-       FROM gjp_panel WHERE ifp_id IN (%s) ORDER BY ifp_id, day",
+       FROM gjp_panel WHERE ifp_id IN (%s)
+       ORDER BY ifp_id, day, user_id",
       paste(sprintf("'%s'", batch), collapse = ", ")
     ))
     b <- run_bounds(rows$ifp_id, as.integer(rows$day))
@@ -267,7 +273,12 @@ tune_settings <- function(con, grid = tuning_grid()) {
   assert_tuning_only(scores)
   means <- stats::aggregate(brier ~ rule, data = scores, FUN = mean)
   best <- function(labels, values) {
-    values[which.min(means$brier[match(labels, means$rule)])]
+    hit <- match(labels, means$rule)
+    if (anyNA(hit)) {
+      stop("tuning sweep is missing candidates: ",
+           paste(labels[is.na(hit)], collapse = ", "), call. = FALSE)
+    }
+    values[which.min(means$brier[hit])]
   }
   settings <- list(
     trim = best(sprintf("trimmed_mean@%.2f", grid$trim), grid$trim),
@@ -298,7 +309,7 @@ crowd_size_curve <- function(con, fns, years, sizes, reps = 5L,
   out <- lapply(ids, function(qid) {
     rows <- DBI::dbGetQuery(con, sprintf(
       "SELECT day, p, resolved_to FROM gjp_panel
-       WHERE ifp_id = '%s' ORDER BY day", qid
+       WHERE ifp_id = '%s' ORDER BY day, user_id", qid
     ))
     y <- rows$resolved_to[1]
     b <- run_bounds(as.integer(rows$day))
@@ -343,7 +354,7 @@ individual_baseline_gjp <- function(con, years) {
               avg(2 * (p - resolved_to) * (p - resolved_to)) AS day_brier
        FROM gjp_panel WHERE q_year IN (%s)
        GROUP BY ifp_id, day
-     ) GROUP BY 1", paste(years, collapse = ", ")
+     ) GROUP BY 1 ORDER BY 1", paste(years, collapse = ", ")
   ))
 }
 
@@ -351,7 +362,7 @@ individual_baseline_fb <- function(con) {
   DBI::dbGetQuery(con,
     "SELECT cohort, question_id, resolution_date,
             avg(2 * (p - resolved_to) * (p - resolved_to)) AS brier
-     FROM fb_binary GROUP BY 1, 2, 3"
+     FROM fb_binary GROUP BY 1, 2, 3 ORDER BY 1, 2, 3"
   )
 }
 

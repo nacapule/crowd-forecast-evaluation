@@ -59,6 +59,34 @@ test_that("rules stay finite and inside the unit interval at 0 and 1", {
                tolerance = 1e-2)
 })
 
+test_that("rules survive a crowd of one at either extreme", {
+  # The crowd-size curve and thin early days both hand rules a lone forecast.
+  for (nm in names(aggregator_set())) {
+    f <- aggregator_set()[[nm]]
+    for (p in c(0, 0.5, 1)) {
+      v <- f(p)
+      expect_true(is.finite(v), info = sprintf("%s at p = %s", nm, p))
+      expect_gte(v, 0)
+      expect_lte(v, 1)
+    }
+  }
+  # Neyman's crowd-size factor is 1 for a single forecast, so it is the
+  # identity up to the log-odds clamp.
+  expect_equal(agg_neyman(0.42), 0.42)
+})
+
+test_that("the trimmed mean matches aggutils at every crowd size", {
+  set.seed(11)
+  for (n in 1:12) {
+    x <- runif(n)
+    for (trim in tuning_grid()$trim) {
+      expect_equal(agg_trimmed_mean(x, trim),
+                   aggutils::trim(100 * x, p = trim) / 100,
+                   info = sprintf("n = %d, trim = %.2f", n, trim))
+    }
+  }
+})
+
 test_that("select crowd takes the best-scoring forecasters", {
   p <- c(0.9, 0.1, 0.6, 0.7, 0.4)
   score <- c(0.02, 1.62, 0.32, 0.18, 0.72)

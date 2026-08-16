@@ -79,10 +79,15 @@ murphy_decomposition <- function(p, y, bins = 10) {
 # Cluster bootstrap over questions: resamples question ids with replacement
 # from a per-question summary table and recomputes a statistic each time.
 # Operates on precomputed summaries only; nothing upstream is re-run.
+#
+# The id list is sorted before resampling. Without that, a summary table
+# arriving in a different row order — a SQL GROUP BY makes no ordering
+# promise — would pair the same seed with a different draw sequence and move
+# the interval between runs on identical data.
 bootstrap_questions <- function(per_question, stat_fn, reps = 2000,
                                 id_col = "question_id", seed = 8145) {
   set.seed(seed)
-  ids <- unique(per_question[[id_col]])
+  ids <- sort(unique(per_question[[id_col]]))
   split_rows <- split(seq_len(nrow(per_question)), per_question[[id_col]])
   stats <- vapply(seq_len(reps), function(i) {
     take <- sample(ids, length(ids), replace = TRUE)

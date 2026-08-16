@@ -8,7 +8,7 @@
 "gjp","independent individuals (yrs 3-4)","trimmed_mean",155,155,0.2616,0.225269,0.300137
 "gjp","independent individuals (yrs 3-4)","median",155,155,0.261649,0.224665,0.300376
 "gjp","independent individuals (yrs 3-4)","mean",155,155,0.29032,0.26186,0.320452
-"gjp","independent individuals (yrs 3-4)","individual forecaster",155,155,0.421577,0.389568,0.455329
+"gjp","independent individuals (yrs 3-4)","individual forecaster",155,155,0.421577,0.390036,0.453889
 "forecastbench","fb_public","trimmed_mean",105,521,0.316462,0.269547,0.359811
 "forecastbench","fb_public","median",105,521,0.316639,0.269192,0.360923
 "forecastbench","fb_public","hd_trim",105,521,0.321493,0.261035,0.381649
@@ -17,7 +17,7 @@
 "forecastbench","fb_public","neyman",105,521,0.358385,0.289029,0.427269
 "forecastbench","fb_public","extremized",105,521,0.364787,0.290163,0.438608
 "forecastbench","fb_public","soften_mean",105,521,0.376958,0.30719,0.443292
-"forecastbench","fb_public","individual forecaster",105,521,0.46921,0.425926,0.51343
+"forecastbench","fb_public","individual forecaster",105,521,0.46921,0.422207,0.511713
 "forecastbench","fb_super","neyman",105,521,0.238832,0.193381,0.286228
 "forecastbench","fb_super","extremized",105,521,0.240168,0.192322,0.290527
 "forecastbench","fb_super","trimmed_mean",105,521,0.244112,0.201662,0.284336
@@ -26,4 +26,4 @@
 "forecastbench","fb_super","geo_mean_odds",105,521,0.246451,0.202463,0.289984
 "forecastbench","fb_super","mean",105,521,0.247212,0.205226,0.28947
 "forecastbench","fb_super","soften_mean",105,521,0.253252,0.208074,0.29816
-"forecastbench","fb_super","individual forecaster",105,521,0.262011,0.218074,0.302621
+"forecastbench","fb_super","individual forecaster",105,521,0.262011,0.218164,0.304885
