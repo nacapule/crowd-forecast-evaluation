@@ -15,6 +15,14 @@
 # - A withdrawal (fcast_type 4) is scored on its own day (its values are the
 #   forecaster's last standing) and the forecaster exits the question after
 #   that day until any later forecast re-enters.
+#
+# Scoring cell: (question, forecaster, condition code, tournament year).
+# Participants were re-randomized between seasons, so on the 31 questions
+# that straddle a year boundary a forecaster can appear under two conditions
+# on the same question — 3,730 such cases. Keying the cell on the full
+# condition code keeps each cohort's days its own instead of attributing a
+# whole question to whichever condition sorted first, and it is what lets the
+# aggregation stage compare a crowd against exactly the forecasters in it.
 
 build_gjp_scores <- function(con) {
   DBI::dbExecute(con,
@@ -49,8 +57,7 @@ build_gjp_scores <- function(con) {
   DBI::dbExecute(con,
     "CREATE OR REPLACE TABLE gjp_user_question_scores AS
      SELECT
-       ifp_id, user_id,
-       min(year) AS year, min(ctt) AS ctt, min(cond) AS cond,
+       ifp_id, user_id, year, ctt, cond,
        min(resolved_to) AS resolved_to,
        sum(seg_days) AS days_held,
        count(*) AS n_forecasts,
@@ -61,7 +68,7 @@ build_gjp_scores <- function(con) {
        FROM gjp_segments
        WHERE seg_end >= seg_start
      )
-     GROUP BY ifp_id, user_id
+     GROUP BY ifp_id, user_id, year, ctt, cond
      HAVING sum(seg_days) > 0"
   )
 }
@@ -73,12 +80,16 @@ build_gjp_scores <- function(con) {
 build_top_decile <- function(con, min_questions = 10) {
   DBI::dbExecute(con, sprintf(
     "CREATE OR REPLACE TABLE gjp_top_decile AS
-     WITH year1 AS (
-       SELECT user_id,
-         avg(mean_daily_brier) AS mean_score,
-         count(*) AS n_questions
+     WITH per_question AS (
+       SELECT user_id, ifp_id, avg(mean_daily_brier) AS q_score
        FROM gjp_user_question_scores
        WHERE year = 1 AND cond = 1
+       GROUP BY user_id, ifp_id
+     ), year1 AS (
+       SELECT user_id,
+         avg(q_score) AS mean_score,
+         count(*) AS n_questions
+       FROM per_question
        GROUP BY user_id
        HAVING count(*) >= %d
      )
