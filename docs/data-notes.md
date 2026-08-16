@@ -63,7 +63,7 @@ written to `qa_accounting` and `qa/qa_report.md` by every build.
 Rationale: binary questions make proper-score comparisons across aggregation
 methods clean (a single probability per forecast); conditional branches score
 only under the realized condition and ordered questions need distance-aware
-scores. Both are documented exclusions, not silent drops.
+scores. Both exclusions are counted in `qa_accounting`.
 
 ## Forecast structure
 
@@ -137,8 +137,8 @@ analysis questions**.
 
 Out-of-window forecasts (before `date_start` or after
 `coalesce(date_suspend, date_closed)`) are flagged (`in_window`), not
-dropped: whether to score them is a protocol decision recorded in the
-methods, not a silent data-layer choice.
+dropped: whether to score them is a protocol decision, and it is recorded in
+the methods.
 
 The QA gate (`make qa`) hard-fails the build on: probabilities outside
 [0, 1] in the accepted set, accepted forecasts that do not join an accepted
@@ -155,8 +155,8 @@ is keyed by forecaster, question, **and resolution horizon**: the round sets
 eight horizon dates (2024-07-28 through 2034-07-19) and each forecaster
 answers every dataset question once per horizon.
 
-The exclusions are a closed ledger, checked at both stages by a hard QA rule
-that recounts the kept and scored tables rather than trusting the counts:
+The exclusions are a closed ledger. A hard QA rule checks it at both stages,
+recounting the kept and scored tables instead of trusting the stored counts:
 
 | stage | reason | entries |
 |---|---|---:|
@@ -185,7 +185,7 @@ definitions and all results live in `analysis/scoring-calibration.qmd`.
 The scoring cell is (question, forecaster, condition code, tournament year)
 rather than (question, forecaster). Participants were re-randomized between
 seasons, so on the 31 questions that straddle a year boundary a forecaster
-can appear under two experimental conditions on the same question — 3,730
+can appear under two experimental conditions on the same question — 3,729
 such cases. Keying on the condition code keeps each cohort's days its own.
 
 `make experiments` adds the aggregation layer: `gjp_panel` expands the

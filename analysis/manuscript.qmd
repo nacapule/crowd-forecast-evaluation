@@ -248,7 +248,7 @@ The analysis question set is the closed, non-voided, regular binary
 questions: `r num(a("question", "accepted"))` of the 617 in the file.
 Binary questions make proper-score comparisons across aggregation rules
 clean, since each forecast is a single probability. The exclusions are
-counted, not silent: `r num(a("question", "voided"))` voided,
+counted: `r num(a("question", "voided"))` voided,
 `r num(a("question", "ordered_multinomial"))` ordered multinomial,
 `r num(a("question", "conditional_ifp"))` conditional branches, and
 `r num(a("question", "multinomial"))` unordered multinomial questions, one
@@ -384,8 +384,8 @@ that the identity holds exactly against the binned mean.
 
 ## The two scoring protocols
 
-The corpora are shaped differently and are given different protocols; the
-difference is stated rather than smoothed over.
+The corpora are shaped differently and are given different protocols. Both
+are stated in full here.
 
 **GJP: daily carry-forward.** A forecast stands from the day it is submitted
 until the day before that forecaster's next forecast on the question, or the
@@ -468,7 +468,7 @@ rules_tbl <- data.frame(
 kbl(rules_tbl, col.names = c("rule", "definition", "source"))
 ```
 
-Two of these need a word. The extremized rule with $a = 1$ is exactly the
+Two of them need a note. The extremized rule with $a = 1$ is exactly the
 geometric mean of odds, so the family contains its own null hypothesis and
 the tuned value can be read directly as how much extremizing helps. The
 Neyman rule takes its factor from the crowd size rather than from a fitted
@@ -493,7 +493,7 @@ do for every rule. Same population, same days, same weighting. A hard build
 check requires the panel to hold exactly the days the protocol scores,
 forecaster by forecaster, which is what keeps the comparison honest.
 
-Crowds are large. On the evaluation years a question-day carries a median of
+The crowds are large. On the evaluation years a question-day carries a median of
 `r num(n1("SELECT CAST(median(n) AS INTEGER) FROM (SELECT ifp_id, day, count(*) AS n FROM gjp_panel WHERE q_year IN (3, 4) GROUP BY 1, 2)"))`
 standing forecasters, ranging from
 `r num(n1("SELECT min(n) FROM (SELECT ifp_id, day, count(*) AS n FROM gjp_panel WHERE q_year IN (3, 4) GROUP BY 1, 2)"))`
@@ -516,10 +516,10 @@ tuning questions against
 `r num(n1("SELECT count(DISTINCT ifp_id) FROM gjp_panel WHERE q_year >= 3"))`
 evaluation questions.
 
-Two structural guards, rather than care, keep the split intact. Every
-tunable parameter is declared in one grid function and nowhere else, so the
-tuning stage cannot silently acquire a knob. And the tuner raises an error if
-it is handed scores carrying an evaluation year, which a unit test exercises.
+Two structural guards hold the split in place. Every tunable parameter is
+declared in one grid function and nowhere else, so the tuning stage cannot
+silently acquire a knob. And the tuner raises an error if it is handed scores
+carrying an evaluation year, which a unit test exercises.
 
 Select-crowd needs a third guard, because it is the one rule that looks at
 the past. A forecaster's trailing accuracy on a given day is a running mean
@@ -531,8 +531,7 @@ median and the fallback days are counted. On the evaluation years the
 fallback rate was
 `r pct(mean(gjp_q$fallback_rate[grepl("select", gjp_q$rule)]), 1)`.
 Select-crowd is GJP-only: a single ForecastBench round carries no history to
-select on, and the results table says so rather than leaving an unexplained
-gap.
+select on, and the results table records that.
 
 ## Uncertainty
 
@@ -553,8 +552,7 @@ replicates affordable over a twelve-million-row panel.
 The cohort ordering matches the tournament literature — superteams ahead of
 teams ahead of independent individuals — and the year-1 top decile stays well
 ahead of the pool it was drawn from in later years, which is the basic
-evidence that forecasting skill is a persistent trait rather than a run of
-luck [@mellers2014; @tetlock2015].
+evidence that forecasting skill persists [@mellers2014; @tetlock2015].
 
 ```{r}
 #| label: tbl-headline
@@ -697,8 +695,8 @@ offered — and the limit of the family as the fraction goes to zero is the
 plain mean. The rule was designed for crowds that hold overconfident members
 [@powell2024]; the GJP independents are collectively underconfident, so
 pulling their aggregate back toward 50% is the wrong correction, and the
-tuner is telling us to apply as little of it as the grid allows. The frozen
-value is reported as what it is, a boundary, rather than smoothed over.
+tuner is applying as little of it as the grid allows. The frozen value is
+reported as the boundary it is.
 
 ```{r}
 #| label: tbl-tuning
@@ -818,9 +816,8 @@ only
 `r f3(results$mean_brier[results$cohort == "fb_super" & results$rule == "individual forecaster"] - min(results$mean_brier[results$cohort == "fb_super" & results$rule != "individual forecaster"]))`
 better than a typical member, and every one of those gaps is smaller than its
 own interval. Aggregation buys the most where the individuals disagree the
-most, which is the mechanism rather than an incidental finding, and it is why
-a rule comparison run only on expert crowds would understate what aggregation
-does for everyone else.
+most. That is the mechanism, and it is why a rule comparison run only on
+expert crowds would understate what aggregation does for everyone else.
 
 ## Crowd size
 
@@ -887,8 +884,8 @@ independents are collectively underconfident, so pushing their pooled
 forecast outward helps. The ForecastBench public crowd is already
 overconfident above 50%, and extremizing an overconfident crowd makes it
 worse. An extremizing constant is a property of a forecaster pool, not of
-aggregation in general, and one carried across pools without first checking
-the pool's calibration is a liability rather than a free improvement.
+aggregation in general. Carrying one to a new pool without first checking that
+pool's calibration can cost more than it gains.
 
 The Neyman rule is the control for that reading, since it derives its factor
 from crowd size and has no constant to carry across pools. It does not escape.

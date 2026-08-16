@@ -122,9 +122,8 @@ horizon, the crowd is pooled per question-horizon.
 parameter — trim fractions, the extremizing constant, the select-crowd size —
 is chosen on GJP years 1–2 and then frozen. Results below are GJP years 3–4,
 never seen during tuning, plus the ForecastBench 2024 round as external
-validation. The split is enforced in code rather than by care: the tuner
-raises an error if it is handed scores carrying an evaluation year, and a
-test exercises that.
+validation. The split is enforced in code: the tuner raises an error if it
+is handed scores carrying an evaluation year, and a test exercises that.
 
 **Select-crowd cannot see its own future.** A forecaster's trailing accuracy
 on a given day is computed only from questions that finished scoring
@@ -155,14 +154,15 @@ tune_tbl <- merge(chosen, sweep, by = c("family", "value"))
 tune_tbl$grid <- vapply(tune_tbl$family, function(f) {
   paste(sort(sweep$value[sweep$family == f]), collapse = ", ")
 }, character(1))
-tune_tbl$frozen <- format(tune_tbl$value, trim = TRUE)
+tune_tbl$frozen <- vapply(tune_tbl$value, format, character(1))
 knitr::kable(
   tune_tbl[, c("family", "grid", "frozen", "brier")],
   digits = 3,
   col.names = c("family", "grid searched", "frozen value",
                 "tuning-year Brier"),
-  caption = "Parameters chosen on GJP years 1-2. Every frozen value is an
-             interior minimum of its grid, not a boundary pick."
+  caption = "Parameters chosen on GJP years 1-2. Four of the five are
+             interior minima of their grids; the softening fraction sits at
+             the low end of its own, for the reason given below."
 )
 ```
 
@@ -171,9 +171,17 @@ Extremizing has a clear optimum near
 pushing the result away from 50% helps, but only up to a point, and past it
 the crowd becomes overconfident. The trimming families keep improving until
 they are discarding roughly `r sprintf("%.0f%%", 100 * settings$trim)` of the
-crowd from each side, which is close to behaving like a median — consistent
-with trimming's usual role of removing the confident tails rather than
-reshaping the middle.
+crowd from each side, which is close to behaving like a median. That is
+trimming's usual role: it removes the confident tails and leaves the middle
+alone.
+
+The softened mean is the exception. Its tuning-year score rises with the
+softening fraction across the whole grid, so the tuner takes the smallest
+value on offer, and the limit of the family as the fraction goes to zero is
+the plain mean. Softening was designed for crowds holding overconfident
+members; the GJP independents are collectively underconfident, so pulling
+their aggregate back toward 50% is the wrong correction, and the search says
+so by retreating to the edge of the grid.
 
 ## The horse race
 
@@ -409,8 +417,7 @@ whose members are furthest behind their own aggregate. The supers are the
 narrow case: the whole field of rules spans
 `r sprintf("%.3f", diff(range(results$mean_brier[results$cohort == "fb_super" & results$rule != "individual forecaster"])))`
 and every gap in it is smaller than its own interval. Aggregation buys the
-most where the individuals disagree the most, which is the mechanism, not an
-incidental finding.
+most where the individuals disagree the most. That is the mechanism.
 
 Scores here are raw Brier throughout, on the two-option scale. The
 ForecastBench leaderboard's published figures are difficulty-adjusted and

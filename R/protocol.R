@@ -19,7 +19,7 @@
 # Scoring cell: (question, forecaster, condition code, tournament year).
 # Participants were re-randomized between seasons, so on the 31 questions
 # that straddle a year boundary a forecaster can appear under two conditions
-# on the same question — 3,730 such cases. Keying the cell on the full
+# on the same question — 3,729 such cases. Keying the cell on the full
 # condition code keeps each cohort's days its own instead of attributing a
 # whole question to whichever condition sorted first, and it is what lets the
 # aggregation stage compare a crowd against exactly the forecasters in it.
