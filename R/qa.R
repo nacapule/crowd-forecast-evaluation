@@ -99,6 +99,16 @@ run_qa_checks <- function(con) {
         "SELECT count(*) FROM fb_binary WHERE source_type <> 'dataset'"),
       "market-proxy resolutions are excluded from the scored set"
     )
+    checks$fb_horizon_key <- qa_check(
+      "fb_one_row_per_forecaster_question_horizon", hard = TRUE,
+      count1(con,
+        "SELECT count(*) FROM (
+           SELECT 1 FROM fb_binary
+           GROUP BY cohort, user_id, question_id, resolution_date
+           HAVING count(*) > 1
+         )"),
+      "the scored set is keyed by forecaster, question, and horizon date"
+    )
   }
 
   if (DBI::dbExistsTable(con, "gjp_user_question_scores")) {
@@ -115,6 +125,33 @@ run_qa_checks <- function(con) {
       count1(con,
         "SELECT count(*) FROM gjp_events WHERE cohort IS NULL"),
       "every scored event carries an analysis cohort label"
+    )
+  }
+
+  if (DBI::dbExistsTable(con, "gjp_panel")) {
+    checks$panel_days <- qa_check(
+      "gjp_panel_days_match_scored_days", hard = TRUE,
+      count1(con,
+        "SELECT count(*) FROM
+           (SELECT ifp_id, user_id, count(*) AS n_panel
+            FROM gjp_panel GROUP BY 1, 2) a
+         FULL JOIN
+           (SELECT ifp_id, user_id, sum(days_held) AS n_scored
+            FROM gjp_user_question_scores WHERE cond = 1
+            GROUP BY 1, 2) b
+           USING (ifp_id, user_id)
+         WHERE a.n_panel IS DISTINCT FROM b.n_scored"),
+      "the aggregation panel holds exactly the days the protocol scores,
+       for exactly the forecasters the protocol scores"
+    )
+    checks$panel_unique <- qa_check(
+      "gjp_panel_one_row_per_forecaster_day", hard = TRUE,
+      count1(con,
+        "SELECT count(*) FROM (
+           SELECT 1 FROM gjp_panel GROUP BY ifp_id, user_id, day
+           HAVING count(*) > 1
+         )"),
+      "no forecaster contributes twice to one day's crowd"
     )
   }
 

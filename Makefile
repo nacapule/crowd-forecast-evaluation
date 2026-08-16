@@ -1,8 +1,8 @@
 RSCRIPT = Rscript
 
-.PHONY: all fetch data fb scores analyze qa test lint clean
+.PHONY: all fetch data fb scores experiments analyze qa test lint clean
 
-all: fetch data fb scores qa test
+all: fetch data fb scores experiments qa test
 
 fetch:
 	$(RSCRIPT) scripts/00_fetch.R
@@ -16,8 +16,12 @@ fb:
 scores:
 	$(RSCRIPT) scripts/04_scores.R
 
+experiments:
+	$(RSCRIPT) scripts/05_experiments.R
+
 analyze:
 	quarto render analysis/scoring-calibration.qmd
+	quarto render analysis/aggregation.qmd
 
 qa:
 	$(RSCRIPT) scripts/02_qa_report.R

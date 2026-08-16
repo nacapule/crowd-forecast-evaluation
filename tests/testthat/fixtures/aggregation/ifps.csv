@@ -1,0 +1,3 @@
+ifp_id,q_type,q_text,q_desc,q_status,date_start,date_suspend,date_to_close,date_closed,outcome,short_title,days_open,n_opts,options
+2001-0,0,"Early question?","desc",closed,1/1/12,1/10/12 0:00,1/10/12,1/12/12,a,"Early",10,2,"(a) Yes, (b) No"
+2002-0,0,"Later question?","desc",closed,1/5/12,1/25/12 0:00,1/25/12,1/27/12,b,"Later",21,2,"(a) Yes, (b) No"
