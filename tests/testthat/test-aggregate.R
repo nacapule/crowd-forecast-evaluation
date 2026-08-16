@@ -37,6 +37,27 @@ test_that("neyman aggregation matches the published factor", {
   expect_equal(agg_neyman(p5), agg_extremized(p5, a = d))
 })
 
+test_that("softened mean agrees with aggutils on crowds above a half", {
+  high <- c(0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95)
+  for (trim in c(0.1, 0.25, 0.4)) {
+    expect_equal(agg_soften_mean(high, trim),
+                 aggutils::soften_mean(100 * high, p = trim) / 100)
+  }
+  # Softening pulls a confident crowd back toward a half.
+  expect_lt(agg_soften_mean(high, 0.25), mean(high))
+})
+
+test_that("softened mean trims the low tail of a crowd below a half", {
+  low <- c(0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40)
+  # Softening pulls this crowd up toward a half, not further down.
+  expect_gt(agg_soften_mean(low, 0.25), mean(low))
+  # aggutils goes the other way here: it compares the mean against 0.5 while
+  # the input is on its own 0-100 scale, so it trims the upper tail of any
+  # crowd averaging over half a percent. The threshold is the only difference
+  # between the two implementations.
+  expect_lt(aggutils::soften_mean(100 * low, p = 0.25) / 100, mean(low))
+})
+
 test_that("hd_trim wrapper reproduces the shortest-interval mean", {
   x <- sort(p5)
   n_out <- floor(length(x) * 0.2)

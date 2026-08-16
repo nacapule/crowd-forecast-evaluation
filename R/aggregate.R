@@ -6,12 +6,13 @@
 # a 1, so probabilities are clamped to [eps, 1 - eps] with the same eps used
 # for log scores; the clamp is stated wherever extremized results are.
 #
-# Four rules delegate to aggutils (Forecasting Research Institute, MIT), the
+# Three rules delegate to aggutils (Forecasting Research Institute, MIT), the
 # reference implementation of the trimming and extremizing methods published
-# in Powell et al. (2022) and Neyman & Roughgarden (2021). aggutils works on
+# in Powell et al. (2024) and Neyman & Roughgarden (2022). aggutils works on
 # the 0-100 percentage scale — its zero/one handling replaces exact 0 and 100
 # values with quantiles of the rest — so the wrappers convert on the way in
-# and out. Tests cross-check each wrapper against a native reimplementation.
+# and out. The remaining six are implemented here, and the tests cross-check
+# every rule the two have in common.
 
 agg_eps <- 1e-3
 
@@ -55,10 +56,25 @@ agg_hd_trim <- function(p, trim = 0.1) {
   aggutils::hd_trim(100 * p, p = trim) / 100
 }
 
-# Softened mean (aggutils): trims only the tail the mean leans towards,
-# pulling confident crowds back rather than extremizing them.
+# Softened mean: trims only the tail the mean leans towards, pulling
+# confident crowds back rather than extremizing them.
+#
+# Implemented here rather than delegated. aggutils::soften_mean takes its
+# input on the 0-100 scale but tests the mean against 0.5 instead of 50, so
+# for any crowd whose mean exceeds half a percent it trims the upper tail —
+# including crowds that lean low, which it then pushes further from 50 rather
+# than toward it. This is the rule as documented, correcting only that
+# threshold; the asymmetric trim indices are kept exactly as the reference
+# has them, so a test can isolate the threshold as the only difference. The
+# two agree on every crowd above 50%.
 agg_soften_mean <- function(p, trim = 0.1) {
-  aggutils::soften_mean(100 * p, p = trim) / 100
+  x <- sort(p)
+  n <- length(x)
+  if (mean(x) > 0.5) {
+    mean(x[seq_len(max(floor(n * (1 - trim)), 1))])
+  } else {
+    mean(x[max(ceiling(n * trim), 1):n])
+  }
 }
 
 # Neyman extremized aggregate (Neyman & Roughgarden 2021): pooled log odds

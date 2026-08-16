@@ -1,6 +1,6 @@
 "parameter","value"
 "trim",0.4
 "hd_trim",0.4
-"soften",0.3
+"soften",0.05
 "extremize_a",2
 "select_k",10

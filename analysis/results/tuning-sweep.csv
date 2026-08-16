@@ -16,11 +16,11 @@
 "select_crowd_k40",0.24137
 "select_crowd_k5",0.24778
 "select_crowd_k80",0.253707
-"soften_mean@0.05",0.298212
-"soften_mean@0.10",0.289121
-"soften_mean@0.20",0.278068
-"soften_mean@0.30",0.273834
-"soften_mean@0.40",0.274877
+"soften_mean@0.05",0.325878
+"soften_mean@0.10",0.339811
+"soften_mean@0.20",0.371336
+"soften_mean@0.30",0.408832
+"soften_mean@0.40",0.453594
 "trimmed_mean@0.05",0.306633
 "trimmed_mean@0.10",0.303426
 "trimmed_mean@0.20",0.299846
