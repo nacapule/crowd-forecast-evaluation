@@ -15,6 +15,7 @@ execute:
 ```{r setup}
 source(file.path("..", "R", "ingest.R"))
 source(file.path("..", "R", "scoring.R"))
+source(file.path("..", "R", "plotting.R"))
 suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
@@ -25,39 +26,10 @@ con <- DBI::dbConnect(
 )
 q <- function(sql) DBI::dbGetQuery(con, sql)
 
-fig_dir <- "figures"
-dir.create(fig_dir, showWarnings = FALSE)
-
-pal <- c("#2a78d6", "#eb6834", "#1baf7a")
-ink <- "#0b0b0b"
-ink2 <- "#52514e"
-muted <- "#898781"
-grid_c <- "#e1e0d9"
-surface <- "#fcfcfb"
-
-theme_cfe <- function() {
-  theme_minimal(base_size = 12) +
-    theme(
-      plot.background = element_rect(fill = surface, color = NA),
-      panel.background = element_rect(fill = surface, color = NA),
-      panel.grid.major = element_line(color = grid_c, linewidth = 0.3),
-      panel.grid.minor = element_blank(),
-      text = element_text(color = ink),
-      axis.text = element_text(color = muted, size = 9),
-      axis.title = element_text(color = ink2, size = 10),
-      strip.text = element_text(color = ink, face = "bold", size = 10),
-      legend.position = "bottom",
-      legend.text = element_text(color = ink2, size = 9),
-      legend.title = element_blank(),
-      plot.title = element_text(face = "bold", size = 13),
-      plot.subtitle = element_text(color = ink2, size = 10)
-    )
-}
-save_fig <- function(p, name, w = 8, h = 4.5) {
-  ggsave(file.path(fig_dir, name), p, width = w, height = h, bg = surface,
-         dpi = 200)
-  p
-}
+pal <- cfe_palette
+ink2 <- cfe_ink2
+muted <- cfe_muted
+surface <- cfe_surface
 ```
 
 ## Scope
@@ -89,13 +61,16 @@ group 1 (independent survey individuals); teams, superteams, and top-decile
 forecasters (defined on year-1 accuracy only, evaluated on years 2–4) appear
 as comparison cohorts.
 
-**ForecastBench (single shot per horizon).** Humans forecast each question
-once; the benchmark resolves the same forecast at several later horizon
-dates. Market-sourced questions unresolved at a horizon are scored upstream
-against the market price — a proxy, not an outcome — so this analysis keeps
-only dataset-source questions (ACLED, DBnomics, FRED, Wikipedia, Yahoo
-Finance) with genuine 0/1 resolutions: 110 of the round's 200 questions, 521
-question-horizons.
+**ForecastBench (single shot per horizon).** Each forecaster answers a
+question once per resolution horizon — the 2024-07-21 round sets eight
+horizon dates from one week to ten years out — so a forecast is keyed by
+forecaster, question, and horizon, and no forecast is revised. Market-sourced
+questions unresolved at a horizon are scored upstream against the market
+price — a proxy, not an outcome — so this analysis keeps only dataset-source
+questions (ACLED, DBnomics, FRED, Wikipedia, Yahoo Finance) with genuine 0/1
+resolutions: 110 of the round's 200 questions, 521 resolved question-horizons.
+A few hundred public submissions sit just outside $[0,1]$ (values such as
+$-0.05$ or $1.02$); they are dropped and counted rather than clamped.
 
 ## Corpus and cohorts
 
@@ -209,13 +184,10 @@ cal <- bind_rows(
     fb_public = "public", fb_super = "superforecasters"
   ))
 
-pal5 <- c(
-  "independent individuals" = "#2a78d6",
-  "top decile (yrs 2-4)" = "#eb6834",
-  "superteams" = "#1baf7a",
-  "public" = "#eda100",
-  "superforecasters" = "#e87ba4"
-)
+pal5 <- stats::setNames(cfe_palette, c(
+  "independent individuals", "top decile (yrs 2-4)", "superteams",
+  "public", "superforecasters"
+))
 p_cal <- ggplot(cal, aes(mean_p, freq, color = cohort)) +
   geom_abline(slope = 1, intercept = 0, color = muted,
               linetype = "dashed", linewidth = 0.35) +
@@ -266,9 +238,13 @@ probabilities nearer the extremes and are right about it.
 
 ```{r skill, fig.height=4}
 skill <- q("
-  SELECT user_id, count(*) AS n_q, avg(mean_daily_brier) AS score
-  FROM gjp_user_question_scores WHERE cond = 1
-  GROUP BY user_id HAVING count(*) >= 5")
+  WITH per_question AS (
+    SELECT user_id, ifp_id, avg(mean_daily_brier) AS q_score
+    FROM gjp_user_question_scores WHERE cond = 1
+    GROUP BY user_id, ifp_id
+  )
+  SELECT user_id, count(*) AS n_q, avg(q_score) AS score
+  FROM per_question GROUP BY user_id HAVING count(*) >= 5")
 marks <- data.frame(
   x = c(median(skill$score),
         q("SELECT avg(q_score) FROM (
@@ -314,7 +290,8 @@ hor_fb <- q("
   GROUP BY horizon_days ORDER BY horizon_days") |>
   mutate(panel = "ForecastBench supers: resolution horizon (days)",
          bucket = factor(bucket, levels = unique(bucket)))
-hor <- bind_rows(hor_gjp, hor_fb)
+hor <- bind_rows(hor_gjp, hor_fb) |>
+  mutate(panel = factor(panel, levels = unique(c(hor_gjp$panel, hor_fb$panel))))
 p_hor <- ggplot(hor, aes(bucket, brier, group = 1)) +
   geom_line(color = pal[1], linewidth = 0.7) +
   geom_point(color = pal[1], size = 2.2) +
@@ -325,8 +302,8 @@ p_hor <- ggplot(hor, aes(bucket, brier, group = 1)) +
   labs(x = NULL, y = "mean Brier [0-2]",
        title = "Accuracy vs distance to resolution",
        subtitle = paste(
-         "GJP accuracy degrades as question end moves out;",
-         "single-shot ForecastBench supers hold roughly flat across horizons"
+         "GJP accuracy degrades as the question end moves out;",
+         "ForecastBench supers show no such trend across horizons"
        )) +
   theme_cfe()
 save_fig(p_hor, "horizon.png", h = 4)
@@ -419,7 +396,7 @@ recon <- data.frame(
     "Tournament literature: supers/teams/individuals ordering"
   ),
   published = c(
-    "0.131 (single-prob convention)", "0.165 (single-prob convention)",
+    "0.131 (adjusted, single-prob)", "0.165 (adjusted, single-prob)",
     "~10% Brier improvement",
     "superteams < teams < independents"
   ),
@@ -439,12 +416,19 @@ knitr::kable(recon, col.names = c("anchor", "published", "ours"))
 ```
 
 Both scored sets contain exactly the leaderboard's 521 dataset
-question-horizons, and the reproduced human baselines land within ~0.01 of
-the published values with the ordering and supers-public gap intact. The
-residual difference is an open item — candidate causes: the leaderboard's
-imputation for unanswered questions, resolution values refreshed after this
-project's pinned snapshot, or a weighting detail — and is carried to the next
-stage rather than tuned away.
+question-horizons. The reproduced medians sit about 0.008 below the published
+figures, and the reason is that the two are not the same statistic. The
+leaderboard's Brier column is difficulty-adjusted: ForecastBench fits a
+two-way fixed-effects model `brier ~ 1 | question + model` across the whole
+field of entrants, subtracts each row's estimated question effect, and then
+shifts the scale so that an always-0.5 forecaster averages 0.25
+(`src/leaderboard/main.py` in the benchmark's repository). Because the human
+entries cover only this one round while the field spans many, the question
+effects do not average out for them, and the adjustment lands as a roughly
+constant offset. The quantity that survives the adjustment is the gap between
+the two human cohorts, and it does: 0.036 raw here against 0.034 published.
+The numbers above are therefore reported as raw Brier scores throughout, and
+comparisons in this project are made between rows computed the same way.
 
 ## Reproducibility
 

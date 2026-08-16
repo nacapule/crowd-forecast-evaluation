@@ -1,6 +1,6 @@
 # QA report
 
-Generated: 2026-08-15 20:57:38 CST
+Generated: 2026-08-16 08:14:29 CST
 
 ## Checks
 
@@ -16,8 +16,11 @@ Generated: 2026-08-15 20:57:38 CST
 | fb_probability_and_resolution_domain | hard | 0 | yes |
 | fb_binary_nonempty | hard | 0 | yes |
 | fb_scored_sources_are_dataset_type | hard | 0 | yes |
+| fb_one_row_per_forecaster_question_horizon | hard | 0 | yes |
 | gjp_scores_within_brier_range | hard | 0 | yes |
 | gjp_events_all_have_cohorts | hard | 0 | yes |
+| gjp_panel_days_match_scored_days | hard | 0 | yes |
+| gjp_panel_one_row_per_forecaster_day | hard | 0 | yes |
 | forecast_ifp_ids_absent_from_questions | soft | 0 | yes |
 | condition_codes_recognized | soft | 0 | yes |
 

@@ -146,9 +146,34 @@ counts and unrecognized condition codes.
 Two later layers build on this schema. `make fb` ingests the ForecastBench
 2024-07-21 human round (fetched at a pinned upstream commit by
 `scripts/fetch_forecastbench.sh`) into `fb_questions` / `fb_resolutions` /
-`fb_forecasts` / `fb_binary` with its own accounting table; `make scores`
+`fb_forecasts` / `fb_binary` with its own accounting table. There, a forecast
+is keyed by forecaster, question, **and resolution horizon**: the round sets
+eight horizon dates (2024-07-28 through 2034-07-19) and each forecaster
+answers every dataset question once per horizon. Entries with no resolution
+date belong to the market-sourced questions (5,096 of 55,372 entries); 281
+public entries fall just outside [0, 1] and are dropped with a count. Of the
+49,995 kept horizon entries, 29,599 join a dataset-source question with a
+genuine 0/1 resolution, covering 521 question-horizons on 110 questions.
+`make scores`
 applies the GJP scoring protocol (segment-based daily carry-forward,
 withdrawal handling, year-1-defined top decile) producing
 `gjp_daily_events`, `gjp_segments`, `gjp_user_question_scores`, and the
 cohort-labeled `gjp_events`. Both layers add hard QA checks. The protocol
 definitions and all results live in `analysis/scoring-calibration.qmd`.
+
+The scoring cell is (question, forecaster, condition code, tournament year)
+rather than (question, forecaster). Participants were re-randomized between
+seasons, so on the 31 questions that straddle a year boundary a forecaster
+can appear under two experimental conditions on the same question — 3,730
+such cases. Keying on the condition code keeps each cohort's days its own.
+
+`make experiments` adds the aggregation layer: `gjp_panel` expands the
+scoring segments of the primary population into one row per (question,
+forecaster, day) — 12,933,059 rows over 33,204 question-days — and attaches
+each forecaster's trailing accuracy as of that day via an as-of join on
+questions that finished scoring strictly before it. A QA check requires the
+panel's day counts to equal the protocol's, forecaster by forecaster, which
+is what makes the crowd and the average-member baseline the same population.
+Results land in `agg_results`, `agg_settings`, `agg_sweep`,
+`agg_gjp_questions`, `agg_fb_questions`, and `agg_crowd_size`, and are
+written to `analysis/results/` as CSV.
