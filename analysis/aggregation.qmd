@@ -379,12 +379,12 @@ forecast outwards helps. The ForecastBench public cohort already flattens
 above 50% — high probabilities not matched by outcomes — and extremizing an
 overconfident crowd makes it worse. Extremizing constants are properties of a
 forecaster pool, not of aggregation in general, and a constant carried across
-pools without checking its calibration is a liability. Neyman's rule takes its
-factor from crowd size rather than from a tuned constant, which spares it the
-transfer question but not the underlying one: it still extremizes, so while it
-is the best rule on the supers it finishes
-`r rank_in("fb_public", "neyman")`th of `r n_rules` on the public — one place
-ahead of the tuned constant, not in a different class.
+pools without checking its calibration is a liability. Neyman's rule is the
+control for that reading, since it takes its factor from crowd size rather
+than from a tuned constant. It does not escape: the two extremizing rules take
+the first two places on the GJP independents and again on the ForecastBench
+supers, and the last two on the public crowd. Choosing the factor from the
+crowd size rather than fitting it changes nothing about where the rule lands.
 
 ## Reconciliation
 

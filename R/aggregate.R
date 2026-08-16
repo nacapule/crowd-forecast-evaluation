@@ -6,13 +6,20 @@
 # a 1, so probabilities are clamped to [eps, 1 - eps] with the same eps used
 # for log scores; the clamp is stated wherever extremized results are.
 #
+# The clamp is applied by this file, not left to the library. aggutils has
+# its own zero/one handling, which replaces exact 0 and 100 with quantiles of
+# the remaining values, and that is a different and data-dependent convention:
+# on a crowd holding 30 zeros it substitutes the 5th percentile of everyone
+# else, moving the pooled log odds a long way. Clamping on the way in means
+# all three log-odds rules treat extremes the same, which is what makes the
+# horse race a comparison of aggregation ideas rather than of eps policies.
+#
 # Three rules delegate to aggutils (Forecasting Research Institute, MIT), the
 # reference implementation of the trimming and extremizing methods published
 # in Powell et al. (2024) and Neyman & Roughgarden (2022). aggutils works on
-# the 0-100 percentage scale — its zero/one handling replaces exact 0 and 100
-# values with quantiles of the rest — so the wrappers convert on the way in
-# and out. The remaining six are implemented here, and the tests cross-check
-# every rule the two have in common.
+# the 0-100 percentage scale, so the wrappers convert on the way in and out.
+# The remaining six are implemented here, and the tests cross-check every rule
+# the two have in common.
 
 agg_eps <- 1e-3
 
@@ -30,11 +37,14 @@ agg_median <- function(p) stats::median(p)
 
 # Symmetric trimmed mean: drops round(trim * n) values from each end.
 # Matches aggutils::trim, which trims the same count from a sorted vector.
+# The length is taken after sorting, because sort() drops NA and an index
+# computed from the unsorted length would then address the wrong values.
 agg_trimmed_mean <- function(p, trim = 0.1) {
-  n <- length(p)
+  x <- sort(p)
+  n <- length(x)
   k <- round(trim * n)
-  if (2 * k >= n) return(stats::median(p))
-  mean(sort(p)[(k + 1):(n - k)])
+  if (2 * k >= n) return(stats::median(x))
+  mean(x[(k + 1):(n - k)])
 }
 
 # Geometric mean of odds: the mean is taken in log-odds space and mapped
@@ -77,16 +87,21 @@ agg_soften_mean <- function(p, trim = 0.1) {
   }
 }
 
-# Neyman extremized aggregate (Neyman & Roughgarden 2021): pooled log odds
+# Neyman extremized aggregate (Neyman & Roughgarden 2022): pooled log odds
 # extremized by a factor derived from the crowd size, so it has no free
 # parameter to tune.
 #
+# Clamped on the way in, like the other two log-odds rules. Passing raw values
+# would hand aggutils its own zero/one substitution instead, and that has two
+# costs: the rule would answer a different question from `extremized` on the
+# same crowd, and a crowd of nothing but exact 0s and 1s returns NA, because
+# the substitution has no interior values left to take a quantile of.
+#
 # The crowd-size factor is exactly 1 for a lone forecast, which makes the rule
-# the identity there — and aggutils' zero/one handling only engages for two or
-# more values, so a lone p = 1 would otherwise round-trip to NaN.
+# the identity there.
 agg_neyman <- function(p) {
   if (length(p) < 2) return(clamp_p(p))
-  aggutils::neymanAggCalc(100 * p) / 100
+  aggutils::neymanAggCalc(100 * clamp_p(p)) / 100
 }
 
 # Select crowd: the median of the k forecasters with the best trailing

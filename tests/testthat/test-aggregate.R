@@ -37,6 +37,23 @@ test_that("neyman aggregation matches the published factor", {
   expect_equal(agg_neyman(p5), agg_extremized(p5, a = d))
 })
 
+test_that("the three log-odds rules clamp extremes the same way", {
+  # A crowd holding exact 0s and 1s. Each rule must see the clamped values,
+  # not aggutils' quantile substitution, or the horse race would be comparing
+  # eps policies as much as aggregation rules.
+  x <- c(0, 0, 0.2, 0.4, 0.6, 1)
+  n <- length(x)
+  d <- (n * (sqrt(3 * n^2 - 3 * n + 1) - 2)) / (n^2 - n - 1)
+  expect_equal(agg_neyman(x), agg_extremized(x, a = d))
+  expect_equal(agg_extremized(x, a = 1), agg_geo_mean_odds(x))
+
+  # Every value at an extreme leaves aggutils' substitution with nothing to
+  # take a quantile of, and it returns NA. Clamping first is what avoids it.
+  expect_true(is.na(aggutils::neymanAggCalc(c(0, 0, 100))))
+  expect_true(is.finite(agg_neyman(c(0, 0, 1))))
+  expect_true(is.finite(agg_neyman(c(0, 1))))
+})
+
 test_that("softened mean agrees with aggutils on crowds above a half", {
   high <- c(0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95)
   for (trim in c(0.1, 0.25, 0.4)) {

@@ -406,7 +406,8 @@ any later forecast re-enters.
 The scoring cell is (question, forecaster, condition code, tournament year)
 rather than (question, forecaster). Participants were re-randomised between
 seasons, so on the 31 questions that straddle a year boundary a forecaster
-can appear under two experimental conditions on the same question — 3,730
+can appear under two experimental conditions on the same question —
+`r num(n1("SELECT count(*) FROM (SELECT ifp_id, user_id FROM gjp_user_question_scores GROUP BY 1, 2 HAVING count(DISTINCT cond) > 1)"))`
 such cases. Keying on the condition code keeps each cohort's days its own,
 which is what allows a crowd to be compared against exactly the forecasters
 in it.
@@ -506,7 +507,10 @@ extremizing constant, and the select-crowd size — is chosen on **GJP years
 1–2** and then frozen. Evaluation is **GJP years 3–4**, never seen during
 tuning, plus the ForecastBench round as external validation. A question
 belongs to the year it was first forecast in, so a question straddling a
-boundary lands on one side only. The split holds
+boundary lands on one side only; that leaves
+`r num(n1("SELECT count(*) FROM (SELECT ifp_id FROM binary_forecasts WHERE cond = 1 GROUP BY 1 HAVING min(year) <= 2 AND max(year) >= 3)"))`
+tuning questions carrying some year-3 days, and no evaluation question
+carrying any tuning-year day. The split holds
 `r num(n1("SELECT count(DISTINCT ifp_id) FROM gjp_panel WHERE q_year <= 2"))`
 tuning questions against
 `r num(n1("SELECT count(DISTINCT ifp_id) FROM gjp_panel WHERE q_year >= 3"))`
@@ -872,8 +876,9 @@ left over from thinning the days.
 The constant tuned on GJP is worth
 `r f3(plain_mean(best_gjp$cohort) - best_gjp$mean_brier)` against the plain
 mean there, and costs accuracy on the modern round. On the ForecastBench
-superforecasters the extremized rule is near the front and near-identical to
-untuned pooling in log odds. On the public cohort it finishes
+superforecasters it still leads, by
+`r f3(results$mean_brier[results$cohort == "fb_super" & results$rule == "trimmed_mean"] - results$mean_brier[results$cohort == "fb_super" & results$rule == "extremized"])`
+over the best rule that does not extremize. On the public cohort it finishes
 `r rank_in("fb_public", "extremized")`th of `r n_rules`, behind even the plain
 mean, while the `r tolower(best_in("fb_public"))` wins.
 
@@ -885,13 +890,16 @@ worse. An extremizing constant is a property of a forecaster pool, not of
 aggregation in general, and one carried across pools without first checking
 the pool's calibration is a liability rather than a free improvement.
 
-The Neyman rule is the natural control, since it derives its factor from
-crowd size and has no constant to carry. It is spared the transfer question
-but not the underlying one: it still extremizes, so while it is the best rule
-on the supers it finishes `r rank_in("fb_public", "neyman")`th of
-`r n_rules` on the public — one place ahead of the tuned constant, not in a
-different class. What fails to transfer is extremizing itself, on a pool that
-does not need it.
+The Neyman rule is the control for that reading, since it derives its factor
+from crowd size and has no constant to carry across pools. It does not escape.
+The two extremizing rules move together in all three cohorts: they take the
+first two places on the GJP independents and again on the ForecastBench
+superforecasters, separated by
+`r f3(abs(results$mean_brier[results$cohort == "fb_super" & results$rule == "neyman"] - results$mean_brier[results$cohort == "fb_super" & results$rule == "extremized"]))`
+there, and they take the last two on the public crowd. What fails to transfer
+is extremizing itself, applied to a pool that does not need it, and choosing
+the factor from the crowd size instead of from a fitted constant does not
+change that.
 
 ```{r}
 #| label: tbl-results
