@@ -17,6 +17,13 @@
             "background": "synthetic fixture"
         },
         {
+            "id": "q_data3",
+            "source": "wikipedia",
+            "question": "Will the synthetic page cross its threshold?",
+            "resolution_criteria": "synthetic; never resolved upstream",
+            "background": "synthetic fixture"
+        },
+        {
             "id": "q_mkt1",
             "source": "manifold",
             "question": "Will the synthetic market resolve yes?",

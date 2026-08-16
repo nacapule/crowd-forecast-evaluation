@@ -68,9 +68,13 @@ forecaster, question, and horizon, and no forecast is revised. Market-sourced
 questions unresolved at a horizon are scored upstream against the market
 price — a proxy, not an outcome — so this analysis keeps only dataset-source
 questions (ACLED, DBnomics, FRED, Wikipedia, Yahoo Finance) with genuine 0/1
-resolutions: 110 of the round's 200 questions, 521 resolved question-horizons.
-A few hundred public submissions sit just outside $[0,1]$ (values such as
-$-0.05$ or $1.02$); they are dropped and counted rather than clamped.
+resolutions. Of the round's 200 questions, 110 are dataset-sourced and 105 of
+those carry a resolution, giving 521 resolved question-horizons; a horizon
+the round's resolution set does not reach — the furthest run to 2034 — has
+nothing to score against. A few hundred public submissions sit just outside
+$[0,1]$ (values such as $-0.05$ or $1.02$); they are dropped and counted
+rather than clamped. Every exclusion is a counted row in `qa/qa_report.md`,
+and a hard check requires the counts to close against the tables.
 
 ## Corpus and cohorts
 

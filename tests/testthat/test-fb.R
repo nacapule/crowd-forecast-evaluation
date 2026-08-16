@@ -4,9 +4,10 @@ test_that("fb question reader classifies source types", {
   q <- read_fb_questions(
     file.path(fb_fixture_dir(), "2024-07-21-human.json")
   )
-  expect_equal(nrow(q), 3)
+  expect_equal(nrow(q), 4)
   expect_equal(
-    q$source_type[order(q$question_id)], c("dataset", "dataset", "market")
+    q$source_type[order(q$question_id)],
+    c("dataset", "dataset", "dataset", "market")
   )
 })
 
@@ -27,6 +28,8 @@ test_that("build_fb keeps only dataset questions with 0/1 resolutions", {
   b <- DBI::dbGetQuery(con, "SELECT * FROM fb_binary ORDER BY cohort, user_id")
   expect_equal(nrow(b), 6)
   expect_false(any(b$question_id == "q_mkt1"))
+  # q_data3 is a dataset question the resolution set never covers.
+  expect_false(any(b$question_id == "q_data3"))
   expect_false(any(b$resolution_date > as.Date("2025-01-01")))
   expect_setequal(unique(b$horizon_days), c(7, 30))
 })
@@ -65,13 +68,37 @@ test_that("fb accounting records exclusions", {
   expect_equal(n("resolution", "combo_dropped"), 1)
   expect_equal(n("resolution", "human_set"), 5)
   expect_equal(n("question", "market_excluded"), 1)
-  expect_equal(n("question", "dataset_kept"), 2)
-  expect_equal(n("forecast_row", "source_entries"), 11)
+  expect_equal(n("question", "dataset_kept"), 3)
+  expect_equal(n("question", "dataset_scored"), 2)
+  expect_equal(n("question", "dataset_no_resolution"), 1)
+  expect_equal(n("forecast_row", "source_entries"), 13)
   expect_equal(n("forecast_row", "market_question_entries"), 2)
   expect_equal(n("forecast_row", "probability_out_of_domain"), 1)
-  expect_equal(n("forecast_row", "horizon_entries_kept"), 7)
   expect_equal(n("forecast_row", "duplicate_horizon_entries_collapsed"), 1)
+  expect_equal(n("forecast_row", "horizon_entries_kept"), 9)
+  # q_data3 never resolved; q_data2's far horizon is not resolved yet.
+  expect_equal(n("forecast_row", "entries_on_unresolved_question"), 2)
+  expect_equal(n("forecast_row", "horizon_without_resolution"), 1)
   expect_equal(n("forecast_row", "scored_rows_binary"), 6)
+})
+
+test_that("fb accounting closes: every source entry is scored or excluded", {
+  con <- build_fixture_db()
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  build_fb(con, dir = fb_fixture_dir())
+  res <- run_qa_checks(con)
+  for (check in c("fb_question_accounting_identity",
+                  "fb_forecast_accounting_identity")) {
+    expect_equal(res$n_violations[res$check == check], 0)
+  }
+
+  # Drop a scored row without recording a reason for it — what a new filter
+  # added to fb_binary would look like. The identity must catch it.
+  DBI::dbExecute(con, "DELETE FROM fb_binary WHERE user_id = 'u_p2'")
+  broken <- run_qa_checks(con)
+  expect_gt(
+    broken$n_violations[broken$check == "fb_forecast_accounting_identity"], 0
+  )
 })
 
 test_that("qa hard checks pass with fb and score layers present", {

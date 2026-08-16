@@ -139,26 +139,52 @@ build_fb <- function(con, dir = fb_dir()) {
       "INSERT INTO fb_accounting VALUES ('%s', '%s', %d)", level, reason, n
     ))
   }
+  n1 <- function(sql) DBI::dbGetQuery(con, sql)[[1]]
   acct("resolution", "source_entries_all_sets", res$n_total)
   acct("resolution", "combo_dropped", res$n_combo)
   acct("resolution", "human_set", nrow(resolutions))
+
   acct("question", "human_set", nrow(questions))
   acct("question", "market_excluded",
        sum(questions$source_type == "market"))
   acct("question", "dataset_kept",
        sum(questions$source_type == "dataset"))
+  # Not every dataset question carries a resolution: the round's resolution
+  # set omits a few outright, and those leave no scored row. Counted here so
+  # dataset_kept = dataset_scored + dataset_no_resolution holds.
+  acct("question", "dataset_scored",
+       n1("SELECT count(DISTINCT question_id) FROM fb_binary"))
+  acct("question", "dataset_no_resolution",
+       n1("SELECT count(*) FROM fb_questions
+           WHERE source_type = 'dataset'
+             AND question_id NOT IN (SELECT question_id FROM fb_resolutions)"))
+
   acct("forecast_row", "source_entries", nrow(forecasts))
   acct("forecast_row", "market_question_entries",
        sum(is.na(forecasts$resolution_date)))
   acct("forecast_row", "probability_out_of_domain",
        sum(!is.na(forecasts$resolution_date) &
              (is.na(forecasts$p) | forecasts$p < 0 | forecasts$p > 1)))
-  acct("forecast_row", "horizon_entries_kept",
-       DBI::dbGetQuery(con, "SELECT count(*) FROM fb_forecasts")[[1]])
   acct("forecast_row", "duplicate_horizon_entries_collapsed",
-       DBI::dbGetQuery(con,
-         "SELECT coalesce(sum(n_entries - 1), 0) FROM fb_forecasts")[[1]])
+       n1("SELECT coalesce(sum(n_entries - 1), 0) FROM fb_forecasts"))
+  acct("forecast_row", "horizon_entries_kept",
+       n1("SELECT count(*) FROM fb_forecasts"))
+  # A horizon can only be scored once the round's resolution set covers it.
+  # Roughly two in five kept entries sit at a horizon it does not: the far
+  # horizons run to 2034, and a few questions never resolved at all. Both are
+  # counted rather than lost at the join that builds fb_binary.
+  acct("forecast_row", "entries_on_unresolved_question",
+       n1("SELECT count(*) FROM fb_forecasts
+           WHERE question_id NOT IN (SELECT question_id FROM fb_resolutions)"))
+  acct("forecast_row", "horizon_without_resolution",
+       n1("SELECT count(*) FROM fb_forecasts f
+           WHERE f.question_id IN (SELECT question_id FROM fb_resolutions)
+             AND NOT EXISTS (
+               SELECT 1 FROM fb_resolutions r
+               WHERE r.question_id = f.question_id
+                 AND r.resolution_date = f.resolution_date
+                 AND r.resolved AND r.resolved_to IN (0.0, 1.0))"))
   acct("forecast_row", "scored_rows_binary",
-       DBI::dbGetQuery(con, "SELECT count(*) FROM fb_binary")[[1]])
+       n1("SELECT count(*) FROM fb_binary"))
   invisible(TRUE)
 }

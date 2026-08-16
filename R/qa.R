@@ -109,6 +109,40 @@ run_qa_checks <- function(con) {
          )"),
       "the scored set is keyed by forecaster, question, and horizon date"
     )
+    # The exclusion counts are checked against the tables they describe, not
+    # against each other: `kept` and `scored` are recounted live, so a filter
+    # added without a reason row breaks the identity and fails the build.
+    row_n <- function(reason) {
+      count1(con, sprintf(
+        "SELECT coalesce(sum(n), 0) FROM fb_accounting
+         WHERE level = 'forecast_row' AND reason = '%s'", reason))
+    }
+    q_n <- function(reason) {
+      count1(con, sprintf(
+        "SELECT coalesce(sum(n), 0) FROM fb_accounting
+         WHERE level = 'question' AND reason = '%s'", reason))
+    }
+    kept <- count1(con, "SELECT count(*) FROM fb_forecasts")
+    scored <- count1(con, "SELECT count(*) FROM fb_binary")
+    scored_q <- count1(con,
+      "SELECT count(DISTINCT question_id) FROM fb_binary")
+
+    checks$fb_question_accounting <- qa_check(
+      "fb_question_accounting_identity", hard = TRUE,
+      abs(q_n("dataset_kept") -
+            (scored_q + q_n("dataset_no_resolution"))),
+      "dataset questions = scored + dropped for having no resolution"
+    )
+    checks$fb_forecast_accounting <- qa_check(
+      "fb_forecast_accounting_identity", hard = TRUE,
+      abs(row_n("source_entries") -
+            (row_n("market_question_entries") +
+               row_n("probability_out_of_domain") +
+               row_n("duplicate_horizon_entries_collapsed") + kept)) +
+        abs(kept - (row_n("entries_on_unresolved_question") +
+                      row_n("horizon_without_resolution") + scored)),
+      "source entries = scored rows + counted exclusions, at both stages"
+    )
   }
 
   if (DBI::dbExistsTable(con, "gjp_user_question_scores")) {
@@ -175,10 +209,25 @@ run_qa_checks <- function(con) {
   do.call(rbind, checks)
 }
 
+# A soft check with a nonzero count has not failed anything — it has reported
+# a number the protocol handles deliberately. Only a hard check can fail.
+qa_status <- function(hard, pass) {
+  ifelse(pass, "pass", ifelse(hard, "FAIL", "reported"))
+}
+
 qa_report_text <- function(con) {
   res <- run_qa_checks(con)
   acct <- DBI::dbGetQuery(con,
     "SELECT level, reason, n FROM qa_accounting ORDER BY level, n DESC")
+  # Ordered by insertion, not by size: the ForecastBench rows are a ledger
+  # that reads source -> exclusions -> scored, and the hard accounting check
+  # is the claim that it adds up.
+  fb_acct <- if (DBI::dbExistsTable(con, "fb_accounting")) {
+    DBI::dbGetQuery(con,
+      "SELECT level, reason, n FROM fb_accounting ORDER BY rowid")
+  } else {
+    acct[0, ]
+  }
   lines <- c(
     "# QA report",
     "",
@@ -186,19 +235,32 @@ qa_report_text <- function(con) {
     "",
     "## Checks",
     "",
-    "| check | type | violations | pass |",
+    sprintf(
+      paste("%d hard, %d soft. A hard violation fails the build. A soft",
+            "check reports a count the scoring protocol handles",
+            "explicitly; it never fails the build."),
+      sum(res$hard), sum(!res$hard)
+    ),
+    "",
+    "| check | type | violations | status |",
     "|---|---|---:|---|",
     sprintf(
       "| %s | %s | %d | %s |",
       res$check, ifelse(res$hard, "hard", "soft"),
-      res$n_violations, ifelse(res$pass, "yes", "NO")
+      res$n_violations, qa_status(res$hard, res$pass)
     ),
     "",
-    "## Accounting",
+    "## Accounting — Good Judgment Project",
     "",
     "| level | reason | n |",
     "|---|---|---:|",
-    sprintf("| %s | %s | %d |", acct$level, acct$reason, acct$n)
+    sprintf("| %s | %s | %d |", acct$level, acct$reason, acct$n),
+    "",
+    "## Accounting — ForecastBench",
+    "",
+    "| level | reason | n |",
+    "|---|---|---:|",
+    sprintf("| %s | %s | %d |", fb_acct$level, fb_acct$reason, fb_acct$n)
   )
   list(text = paste(lines, collapse = "\n"), results = res)
 }

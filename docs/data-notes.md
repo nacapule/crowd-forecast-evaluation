@@ -149,12 +149,29 @@ Two later layers build on this schema. `make fb` ingests the ForecastBench
 `fb_forecasts` / `fb_binary` with its own accounting table. There, a forecast
 is keyed by forecaster, question, **and resolution horizon**: the round sets
 eight horizon dates (2024-07-28 through 2034-07-19) and each forecaster
-answers every dataset question once per horizon. Entries with no resolution
-date belong to the market-sourced questions (5,096 of 55,372 entries); 281
-public entries fall just outside [0, 1] and are dropped with a count. Of the
-49,995 kept horizon entries, 29,599 join a dataset-source question with a
-genuine 0/1 resolution, covering 521 question-horizons on 110 questions.
-`make scores`
+answers every dataset question once per horizon.
+
+The exclusions are a closed ledger, checked at both stages by a hard QA rule
+that recounts the kept and scored tables rather than trusting the counts:
+
+| stage | reason | entries |
+|---|---|---:|
+| source | all human-round entries | 55,372 |
+| | no resolution date — market-sourced questions | 5,096 |
+| | probability outside [0, 1] (values such as −0.05, 1.02) | 281 |
+| | duplicate (forecaster, question, horizon) keys collapsed | 0 |
+| kept | horizon entries carried forward | 49,995 |
+| | question never resolved upstream | 2,368 |
+| | horizon not covered by the round's resolution set | 18,028 |
+| scored | `fb_binary` | 29,599 |
+
+The second block is what makes this corpus a single snapshot rather than a
+history: the round's resolution set covers 521 of the possible
+question-horizons, so forecasts aimed at 2027, 2029 and 2034 have nothing to
+score against yet. At the question level, 110 of the 200 human-round
+questions are dataset-sourced; 105 of those carry a resolution and are
+scored, and 5 carry none at all (four DBnomics temperature series and one
+Wikipedia question). `make scores`
 applies the GJP scoring protocol (segment-based daily carry-forward,
 withdrawal handling, year-1-defined top decile) producing
 `gjp_daily_events`, `gjp_segments`, `gjp_user_question_scores`, and the
