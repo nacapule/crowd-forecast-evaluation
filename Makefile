@@ -22,12 +22,16 @@ experiments:
 analyze:
 	quarto render analysis/scoring-calibration.qmd
 	quarto render analysis/aggregation.qmd
+	quarto render analysis/manuscript.qmd
+
+manuscript:
+	quarto render analysis/manuscript.qmd
 
 qa:
 	$(RSCRIPT) scripts/02_qa_report.R
 
 test:
-	$(RSCRIPT) -e 'out <- testthat::test_dir("tests/testthat", stop_on_failure = TRUE)'
+	$(RSCRIPT) scripts/06_test.R
 
 lint:
 	$(RSCRIPT) -e 'res <- lintr::lint_dir("."); print(res); if (length(res) > 0) quit(status = 1)'
