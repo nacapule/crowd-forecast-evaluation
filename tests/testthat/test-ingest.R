@@ -87,12 +87,12 @@ test_that("build_db accounts for every forecast row exactly once", {
   n <- function(level, reason) {
     acct$n[acct$level == level & acct$reason == reason]
   }
-  expect_equal(n("forecast_row", "source_rows"), 21)
+  expect_equal(n("forecast_row", "source_rows"), 27)
   expect_equal(n("forecast_row", "exact_duplicate_dropped"), 1)
-  expect_equal(n("forecast_row", "accepted"), 10)
+  expect_equal(n("forecast_row", "accepted"), 16)
   total <- DBI::dbGetQuery(con, "SELECT count(*) AS n FROM forecasts")$n
   rej <- DBI::dbGetQuery(con, "SELECT count(*) AS n FROM forecasts_rejected")$n
-  expect_equal(total, 20)
+  expect_equal(total, 26)
   expect_equal(rej + n("forecast_row", "accepted"), total)
 })
 
@@ -118,7 +118,7 @@ test_that("binary view has one row per event with correct resolution", {
   con <- build_fixture_db()
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
   b <- DBI::dbGetQuery(con, "SELECT * FROM binary_forecasts ORDER BY user_id")
-  expect_equal(nrow(b), 5)
+  expect_equal(nrow(b), 8)
   u1 <- b[b$user_id == "u1", ]
   expect_equal(u1$p[u1$ifp_id == "1001-0"], 0.2)
   expect_equal(u1$resolved_to[u1$ifp_id == "1001-0"], 0)
