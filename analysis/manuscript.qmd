@@ -1,0 +1,1002 @@
+---
+title: "Scoring and Aggregating Human Probability Forecasts on Two Public Corpora"
+subtitle: "An out-of-sample comparison of nine aggregation rules"
+author: "Alejandro Guerrero Padrés"
+date: today
+abstract: |
+  Given many people's probability forecasts on the same question, how should
+  they be scored, and how should they be combined? This paper answers both
+  questions against two public corpora of real human forecasts: the Good
+  Judgment Project's ACE tournament surveys (2011–2015, 3.1 million
+  individual-level rows) and the ForecastBench 2024 human round. Individual
+  accuracy and calibration are measured under precisely stated protocols, and
+  nine aggregation rules are then compared out of sample, with every free
+  parameter tuned on the first two tournament years and frozen before
+  evaluation on the last two and on the modern round. Aggregating is worth far
+  more than choosing how to aggregate: on the held-out years the best rule
+  scores 0.204 against 0.422 for the average member of the same crowd on the
+  same days, while the spread across rules is 0.086. Log-odds extremizing wins
+  on the tournament data and keeps improving as the crowd grows, where the
+  simple mean saturates near twenty-five forecasters. It does not travel: the
+  same constant ranks seventh of eight on ForecastBench's public crowd, which
+  is overconfident where the tournament's independents are underconfident.
+  Extremizing constants are properties of a forecaster pool rather than of
+  aggregation in general. The scored ForecastBench set reproduces the
+  benchmark leaderboard's 521 question-horizons exactly, and the residual gap
+  against its published scores is traced to the leaderboard's
+  difficulty adjustment rather than left open.
+format:
+  pdf:
+    documentclass: article
+    geometry: margin=1in
+    fontsize: 11pt
+    number-sections: true
+    colorlinks: true
+    fig-width: 6.5
+    fig-height: 3.6
+    fig-pos: "htbp"
+    tbl-cap-location: bottom
+bibliography: references.bib
+link-citations: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+for (f in c("ingest.R", "scoring.R", "plotting.R", "aggregate.R",
+            "experiments.R", "qa.R")) {
+  source(file.path("..", "R", f))
+}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+})
+con <- DBI::dbConnect(
+  duckdb::duckdb(),
+  dbdir = file.path("..", "data", "db", "gjp.duckdb"), read_only = TRUE
+)
+q <- function(sql) DBI::dbGetQuery(con, sql)
+n1 <- function(sql) q(sql)[[1]]
+num <- function(x) format(x, big.mark = ",", trim = TRUE)
+f3 <- function(x) sprintf("%.3f", x)
+pct <- function(x, digits = 0) sprintf(paste0("%.", digits, "f%%"), 100 * x)
+
+# Tables go out as LaTeX floats rather than as markdown: pandoc renders a
+# markdown table as a longtable, which breaks across pages and drags its
+# caption with it.
+kbl <- function(x, ...) {
+  knitr::kable(x, format = "latex", booktabs = TRUE, linesep = "",
+               row.names = FALSE, ...)
+}
+
+qa_checks <- run_qa_checks(con)
+n_hard <- sum(qa_checks$hard)
+tests <- utils::read.csv(file.path("..", "qa", "test-summary.csv"))
+n_assertions <- tests$n[tests$metric == "assertions"]
+
+settings <- as.list(stats::setNames(
+  q("SELECT value FROM agg_settings")$value,
+  q("SELECT parameter FROM agg_settings")$parameter
+))
+results <- q("SELECT * FROM agg_results")
+sweep <- q("SELECT * FROM agg_sweep")
+gjp_q <- q("SELECT * FROM agg_gjp_questions")
+fb_q <- q("SELECT * FROM agg_fb_questions")
+curve <- q("SELECT * FROM agg_crowd_size")
+acct <- q("SELECT level, reason, n FROM qa_accounting")
+fb_acct <- q("SELECT level, reason, n FROM fb_accounting")
+a <- function(level, reason) acct$n[acct$level == level & acct$reason == reason]
+fa <- function(level, reason) {
+  fb_acct$n[fb_acct$level == level & fb_acct$reason == reason]
+}
+
+rule_label <- function(rule) {
+  lab <- c(
+    mean = "mean",
+    median = "median",
+    trimmed_mean = sprintf("trimmed mean (%.0f%%)", 100 * settings$trim),
+    hd_trim = sprintf("HD-trim (%.0f%%)", 100 * settings$hd_trim),
+    soften_mean = sprintf("softened mean (%.0f%%)", 100 * settings$soften),
+    geo_mean_odds = "geometric mean of odds",
+    extremized = sprintf("extremized (a = %.2g)", settings$extremize_a),
+    neyman = "Neyman extremized",
+    "individual forecaster" = "average member"
+  )
+  out <- unname(ifelse(is.na(lab[rule]), rule, lab[rule]))
+  sel <- grepl("^select_crowd_k", rule)
+  out[sel] <- sprintf("select crowd (top %s)",
+                      sub("^select_crowd_k", "", rule[sel]))
+  out
+}
+
+results$label <- rule_label(results$rule)
+cohort_label <- c(
+  "independent individuals (yrs 3-4)" = "GJP independents",
+  fb_public = "ForecastBench public",
+  fb_super = "ForecastBench supers"
+)
+results$panel <- factor(unname(cohort_label[results$cohort]),
+                        levels = unname(cohort_label))
+gjp <- results[results$corpus == "gjp", ]
+crowd_only <- gjp[gjp$rule != "individual forecaster", ]
+best_gjp <- crowd_only[which.min(crowd_only$mean_brier), ]
+worst_gjp <- crowd_only[which.max(crowd_only$mean_brier), ]
+ind_gjp <- gjp[gjp$rule == "individual forecaster", ]
+
+rank_in <- function(coh, rule) {
+  df <- results[results$cohort == coh &
+                  results$rule != "individual forecaster", ]
+  which(df$rule[order(df$mean_brier)] == rule)
+}
+best_in <- function(coh) {
+  df <- results[results$cohort == coh &
+                  results$rule != "individual forecaster", ]
+  df$label[which.min(df$mean_brier)]
+}
+n_rules <- sum(results$cohort == "fb_public" &
+                 results$rule != "individual forecaster")
+# How far aggregating at all outruns picking the best rule: the step from the
+# average member to the weakest rule, against the spread among the rules.
+step_ratio <- function(coh) {
+  df <- results[results$cohort == coh, ]
+  ind <- df$mean_brier[df$rule == "individual forecaster"]
+  rules <- df$mean_brier[df$rule != "individual forecaster"]
+  (ind - max(rules)) / (max(rules) - min(rules))
+}
+
+# The abstract sits in the YAML header, where inline R does not run, so its
+# figures are the one place in this document where a number is typed. They are
+# checked here against the pipeline instead, and the render fails on drift.
+stopifnot(
+  f3(best_gjp$mean_brier) == "0.204",
+  f3(ind_gjp$mean_brier) == "0.422",
+  f3(worst_gjp$mean_brier - best_gjp$mean_brier) == "0.086",
+  rank_in("fb_public", "extremized") == 7,
+  n_rules == 8,
+  n1("SELECT count(DISTINCT question_id || resolution_date) FROM fb_binary")
+    == 521
+)
+```
+
+# Introduction
+
+A group of people gives probabilities for the same event. Some are careful,
+some are not; some are confident, some hedge. Two questions follow, and they
+are usually run together when they should be kept apart. The first is how to
+score what each person said, which is a question about proper scoring rules
+and about the accounting conventions that turn a stream of revised forecasts
+into a number. The second is how to pool them, which is a question about
+aggregation rules and about whether a rule that looks good on one pool of
+forecasters keeps working on another.
+
+The wisdom-of-crowds literature has good answers to the second question and
+they are not all compatible. Averaging probabilities is the obvious rule and
+a poor one: it pulls the aggregate toward the middle regardless of how many
+people agree. Pooling in log odds does better. Pushing the pooled log odds
+further from 50% — extremizing — does better still on tournament data, with
+two standard justifications: the crowd's information is partly independent,
+so the pooled forecast should be more confident than any member
+[@baron2014], and the standard aggregate is systematically underconfident
+under a shared-signal model [@satopaa2014]. Trimming the tails is a
+competing family [@powell2024], and extremizing by a factor derived from the
+crowd size rather than a fitted constant is a third [@neyman2022]. Selecting
+a subcrowd on past accuracy is a fourth [@mellers2014].
+
+What is harder to find is a clean statement of how much any of this is
+worth relative to the decision to aggregate at all, measured against a
+baseline drawn from exactly the same population on exactly the same days,
+with every free parameter frozen before the evaluation data is touched. That
+is what this paper reports. Two corpora are used, thirteen years apart, so
+that a rule tuned on the first can be checked against the second without
+re-tuning.
+
+Three findings. Aggregating is the larger decision by a factor of about two
+on both non-expert crowds, but not by an order of magnitude — the choice of
+rule earns its keep, it just earns less than the choice to pool. Extremizing
+wins on the tournament data and keeps gaining as the crowd grows, exactly
+where the plain mean stops. And it does not transfer: the constant tuned on
+the tournament's independent forecasters is near the back of the field on
+ForecastBench's public crowd, for a reason visible in the calibration
+diagrams of both.
+
+Everything here is reproducible from a public repository: raw files verified
+by checksum, a build that fails on any of `r n_hard` hard data invariants,
+and `r num(n_assertions)` unit-test assertions. Section [-@sec-repro] gives
+the details.
+
+# Data {#sec-data}
+
+## Good Judgment Project ACE surveys
+
+The primary corpus is the Good Judgment Project's forecast archive from
+IARPA's ACE tournament, four seasons between 2011 and 2015, published on
+Harvard Dataverse under CC0 [@gjpdata]. This analysis uses the question file
+and the four survey-forecast files:
+`r num(a("forecast_row", "source_rows"))` rows, one per answer option per
+forecast event, with no exact duplicates.
+
+The tournament assigned participants to elicitation conditions, and this
+matters more than any other structural fact about the corpus. Condition
+group 1 forecast independently on a survey platform. Group 2 could see crowd
+information. Group 4 worked in interacting teams. Group 5 were
+superforecaster teams, formed after year 1 by promoting top performers.
+Group 3, the prediction markets, appears only in separate market files and
+not in the survey data at all. Team and superteam members are not
+independent crowd members — they talk to each other — so the **primary
+population throughout is condition group 1**, with the other groups reported
+only as comparison cohorts. Training subconditions within group 1 are kept
+as covariates rather than filtered out.
+
+The analysis question set is the closed, non-voided, regular binary
+questions: `r num(a("question", "accepted"))` of the 617 in the file.
+Binary questions make proper-score comparisons across aggregation rules
+clean, since each forecast is a single probability. The exclusions are
+counted, not silent: `r num(a("question", "voided"))` voided,
+`r num(a("question", "ordered_multinomial"))` ordered multinomial,
+`r num(a("question", "conditional_ifp"))` conditional branches, and
+`r num(a("question", "multinomial"))` unordered multinomial questions, one
+stated reason each. Ordered questions would need a distance-aware score;
+conditional branches score only under the realized condition.
+
+```{r}
+#| label: tbl-gjp-cohorts
+#| tbl-cap: "GJP cohorts on the analysis question set. Rows are last-per-day
+#|   forecast events. The top decile is a subset of the independents, selected
+#|   on year-1 accuracy alone and labelled only from year 2 onward."
+coh <- q("
+  SELECT CASE cohort
+           WHEN 'gjp_individual' THEN 'independent individuals'
+           WHEN 'gjp_top_decile' THEN 'top decile (yrs 2-4)'
+           WHEN 'gjp_crowd_info' THEN 'saw crowd information (yr 1)'
+           WHEN 'gjp_team' THEN 'teams'
+           WHEN 'gjp_superteam' THEN 'superteams' END AS cohort,
+         count(*) AS events, count(DISTINCT user_id) AS forecasters,
+         count(DISTINCT ifp_id) AS questions
+  FROM gjp_events GROUP BY 1 ORDER BY 2 DESC")
+kbl(coh, format.args = list(big.mark = ","),
+             col.names = c("cohort", "scored events", "forecasters",
+                           "questions"))
+```
+
+Two format quirks are handled at ingest and recorded because they would
+otherwise corrupt the question table silently: the question file uses
+classic-Mac carriage-return line endings with Latin-1 text, converted at the
+byte level before any string handling, and `m/d/y` dates. One structural fact
+is worth stating because it is what makes trailing-accuracy methods possible
+at all: returning participants keep their identifiers across seasons, so a
+forecaster's history spans years even though the codebook's identifier ranges
+are banded by recruitment year.
+
+## ForecastBench 2024 human round
+
+The validation corpus is the human round of ForecastBench, a continuously
+updated forecasting benchmark [@karger2025], taken from its public dataset
+repository at a pinned commit under CC BY-SA 4.0 [@fbdatasets]. The round
+posed 200 questions on 2024-07-21 to two comparison groups: a public crowd
+(`r num(n1("SELECT count(DISTINCT user_id) FROM fb_binary WHERE cohort = 'fb_public'"))`
+forecasters) and a superforecaster group
+(`r num(n1("SELECT count(DISTINCT user_id) FROM fb_binary WHERE cohort = 'fb_super'"))`).
+
+The structural fact that governs the whole layer is that **a forecaster
+answers each question once per resolution horizon**. The round sets eight
+horizon dates running from one week to ten years out, and each forecast entry
+carries its own. Horizon is therefore part of the forecast key, not a
+property to be averaged over.
+
+Only dataset-sourced questions are scored. ForecastBench resolves
+market-sourced questions that are still open at a horizon against the market
+price on that date, which is a continuous proxy rather than an outcome, so
+including them would mix two different quantities under one score. Of the 200
+questions, `r num(fa("question", "dataset_kept"))` are dataset-sourced
+(ACLED, DBnomics, FRED, Wikipedia, Yahoo Finance) and
+`r num(fa("question", "dataset_scored"))` of those carry a resolution;
+`r num(fa("question", "dataset_no_resolution"))` carry none at all.
+
+## Exclusions
+
+Both corpora are reduced by exclusions, and in a study whose conclusions are
+differences of a few hundredths, an uncounted exclusion is a real hazard: it
+is exactly how a population quietly stops matching its baseline. Every drop is
+therefore a counted row, and two hard build checks require the counts to close
+against the tables they describe. A filter added without a reason breaks the
+identity and fails the build.
+
+```{r}
+#| label: tbl-fb-ledger
+#| tbl-cap: "ForecastBench exclusion ledger. Each block sums to the line above
+#|   it. The second block is what makes this corpus a snapshot rather than a
+#|   history: the round's resolution set reaches five of the eight horizons, so
+#|   forecasts aimed at 2027, 2029 and 2034 have nothing yet to score against."
+ledger <- data.frame(
+  stage = c("source", "", "", "", "kept", "", "", "scored"),
+  item = c(
+    "all human-round entries",
+    "no resolution date (market-sourced questions)",
+    "probability outside [0, 1]",
+    "duplicate (forecaster, question, horizon) keys collapsed",
+    "horizon entries carried forward",
+    "question never resolved upstream",
+    "horizon not covered by the resolution set",
+    "scored rows"
+  ),
+  n = c(
+    fa("forecast_row", "source_entries"),
+    fa("forecast_row", "market_question_entries"),
+    fa("forecast_row", "probability_out_of_domain"),
+    fa("forecast_row", "duplicate_horizon_entries_collapsed"),
+    fa("forecast_row", "horizon_entries_kept"),
+    fa("forecast_row", "entries_on_unresolved_question"),
+    fa("forecast_row", "horizon_without_resolution"),
+    fa("forecast_row", "scored_rows_binary")
+  )
+)
+kbl(ledger,
+             format.args = list(big.mark = ","),
+             col.names = c("stage", "", "entries"))
+```
+
+The scored ForecastBench set is
+`r num(fa("forecast_row", "scored_rows_binary"))` rows over
+`r num(n1("SELECT count(DISTINCT question_id || resolution_date) FROM fb_binary"))`
+question-horizons. On the GJP side,
+`r num(a("forecast_row", "question_not_in_analysis_set"))` of the
+`r num(a("forecast_row", "source_rows"))` source rows sit on questions
+outside the analysis set, leaving
+`r num(a("forecast_row", "accepted"))` accepted rows forming
+`r num(n1("SELECT count(*) FROM binary_forecasts"))` paired forecast events.
+
+# Methods {#sec-methods}
+
+## Scores
+
+Scores are the two-option Brier score [@brier1950]: for a binary question
+with forecast $p$ and outcome $y \in \{0, 1\}$,
+$\mathrm{BS} = (p - y)^2 + ((1 - p) - (1 - y))^2 = 2(p - y)^2$, ranging from
+0 for a perfect forecast to 2 for a confident wrong one. This is the
+convention of the tournament literature the results are reconciled against;
+where an external anchor uses the single-probability convention $(p - y)^2$
+the table says so. The Brier score is strictly proper [@gneiting2007], so a
+forecaster minimises it by reporting their true belief. Log scores clamp
+probabilities to $[10^{-3}, 1 - 10^{-3}]$.
+
+Calibration is reported as reliability diagrams over ten equal-width bins
+with Wilson intervals on the observed frequency in each bin [@wilson1927],
+and as the Murphy decomposition of the mean score into reliability,
+resolution and uncertainty [@murphy1973], computed on the same binning so
+that the identity holds exactly against the binned mean.
+
+## The two scoring protocols
+
+The corpora are shaped differently and are given different protocols; the
+difference is stated rather than smoothed over.
+
+**GJP: daily carry-forward.** A forecast stands from the day it is submitted
+until the day before that forecaster's next forecast on the question, or the
+end of the scoring window, whichever comes first. The scoring window runs
+from the question's start date through its suspension date, falling back to
+its close date. A forecaster's score on a question is the day-weighted mean
+Brier of their standing forecasts; scores are then averaged across questions
+without weighting, so that a question open for
+`r num(n1("SELECT max(date_diff('day', date_start, coalesce(date_suspend, date_closed)) + 1) FROM questions_accepted"))`
+days does not count for more than the median question's
+`r num(n1("SELECT CAST(median(date_diff('day', date_start, coalesce(date_suspend, date_closed)) + 1) AS INTEGER) FROM questions_accepted"))`.
+Edge rules: multiple forecasts on one day resolve to the last by timestamp;
+forecasts entered before the window carry from its start; forecasts after it
+contribute zero days; a withdrawal is scored on its own day using the
+forecaster's last standing values, after which they leave the question until
+any later forecast re-enters.
+
+The scoring cell is (question, forecaster, condition code, tournament year)
+rather than (question, forecaster). Participants were re-randomised between
+seasons, so on the 31 questions that straddle a year boundary a forecaster
+can appear under two experimental conditions on the same question — 3,730
+such cases. Keying on the condition code keeps each cohort's days its own,
+which is what allows a crowd to be compared against exactly the forecasters
+in it.
+
+**ForecastBench: single shot per horizon.** Each forecast is keyed by
+forecaster, question and horizon date, and no forecast is revised. A crowd
+is pooled per question-horizon, and question-horizons average unweighted
+within a cohort.
+
+## The aggregation rules
+
+Nine rules, listed in @tbl-rules. Four delegate to `aggutils` [@aggutils],
+the reference implementation of the trimming and extremizing methods; that
+package works on the 0–100 percentage scale, so the wrappers convert on the
+way in and out. The other five are implemented directly. Unit tests
+cross-check every wrapper against an independent reimplementation — the
+symmetric trimmed mean at every crowd size from 1 to 12, the Neyman
+crowd-size factor against its published formula, and the highest-density
+trimmed mean against a shortest-interval implementation — so the package is
+used as a reference rather than trusted blindly.
+
+```{r}
+#| label: tbl-rules
+#| tbl-cap: "The nine aggregation rules. Parameterised rules show the value
+#|   frozen after tuning. Rules that work in log odds clamp probabilities to
+#|   the same bounds as the log score."
+rules_tbl <- data.frame(
+  rule = c("mean", "median",
+           sprintf("trimmed mean (%.0f%%)", 100 * settings$trim),
+           sprintf("HD-trim (%.0f%%)", 100 * settings$hd_trim),
+           sprintf("softened mean (%.0f%%)", 100 * settings$soften),
+           "geometric mean of odds",
+           sprintf("extremized (a = %.2g)", settings$extremize_a),
+           "Neyman extremized",
+           sprintf("select crowd (top %d)", as.integer(settings$select_k))),
+  what = c(
+    "arithmetic mean of the probabilities",
+    "median of the probabilities",
+    "mean after dropping equal counts from each tail",
+    "mean inside the shortest interval holding 1 - p",
+    "trims only the tail the mean leans toward",
+    "mean taken in log odds, mapped back",
+    "pooled log odds multiplied by a",
+    "pooled log odds times a crowd-size factor",
+    "median of the top k by trailing accuracy"
+  ),
+  src = c("--", "--", "--", "Powell 2024", "aggutils", "--",
+          "Satopaa 2014", "Neyman 2022", "Mellers 2014")
+)
+kbl(rules_tbl, col.names = c("rule", "definition", "source"))
+```
+
+Two of these need a word. The extremized rule with $a = 1$ is exactly the
+geometric mean of odds, so the family contains its own null hypothesis and
+the tuned value can be read directly as how much extremizing helps. The
+Neyman rule takes its factor from the crowd size rather than from a fitted
+constant, which means it has nothing to tune and nothing to transfer — a
+property worth testing separately from whether extremizing itself transfers.
+
+## The day panel and the average-member baseline
+
+The headline comparison is a crowd against its own members, so both have to
+be scored the same way. For GJP the panel makes that exact: the scoring
+segments of the primary population are expanded into one row per (question,
+forecaster, day) on which that forecaster had a standing forecast —
+`r num(n1("SELECT count(*) FROM gjp_panel"))` rows over
+`r num(n1("SELECT count(DISTINCT ifp_id || day) FROM gjp_panel"))`
+question-days. On each day the rule turns the standing forecasts into one
+probability and that probability is scored; the question's score is the mean
+over its days.
+
+The average-member baseline runs on the same panel: on each day the standing
+forecasters are scored individually and averaged, then days average as they
+do for every rule. Same population, same days, same weighting. A hard build
+check requires the panel to hold exactly the days the protocol scores,
+forecaster by forecaster, which is what keeps the comparison honest.
+
+Crowds are large. On the evaluation years a question-day carries a median of
+`r num(n1("SELECT CAST(median(n) AS INTEGER) FROM (SELECT ifp_id, day, count(*) AS n FROM gjp_panel WHERE q_year IN (3, 4) GROUP BY 1, 2)"))`
+standing forecasters, ranging from
+`r num(n1("SELECT min(n) FROM (SELECT ifp_id, day, count(*) AS n FROM gjp_panel WHERE q_year IN (3, 4) GROUP BY 1, 2)"))`
+to
+`r num(n1("SELECT max(n) FROM (SELECT ifp_id, day, count(*) AS n FROM gjp_panel WHERE q_year IN (3, 4) GROUP BY 1, 2)"))`.
+
+## Tuning, freezing, and the leakage rule
+
+Every free parameter — the two trim fractions, the softening fraction, the
+extremizing constant, and the select-crowd size — is chosen on **GJP years
+1–2** and then frozen. Evaluation is **GJP years 3–4**, never seen during
+tuning, plus the ForecastBench round as external validation. A question
+belongs to the year it was first forecast in, so a question straddling a
+boundary lands on one side only. The split holds
+`r num(n1("SELECT count(DISTINCT ifp_id) FROM gjp_panel WHERE q_year <= 2"))`
+tuning questions against
+`r num(n1("SELECT count(DISTINCT ifp_id) FROM gjp_panel WHERE q_year >= 3"))`
+evaluation questions.
+
+Two structural guards, rather than care, keep the split intact. Every
+tunable parameter is declared in one grid function and nowhere else, so the
+tuning stage cannot silently acquire a knob. And the tuner raises an error if
+it is handed scores carrying an evaluation year, which a unit test exercises.
+
+Select-crowd needs a third guard, because it is the one rule that looks at
+the past. A forecaster's trailing accuracy on a given day is a running mean
+over the questions that finished scoring **strictly before** that day, joined
+as of the forecast date, and a forecaster needs
+`r select_min_history()` finished questions before becoming eligible. Where
+fewer than two forecasters qualify the rule falls back to the whole-crowd
+median and the fallback days are counted. On the evaluation years the
+fallback rate was
+`r pct(mean(gjp_q$fallback_rate[grepl("select", gjp_q$rule)]), 1)`.
+Select-crowd is GJP-only: a single ForecastBench round carries no history to
+select on, and the results table says so rather than leaving an unexplained
+gap.
+
+## Uncertainty
+
+All intervals are question-cluster bootstraps: question identifiers are
+resampled with replacement from a table of precomputed per-question
+summaries, 2,000 replicates, and the statistic is recomputed each time
+[@efron1993]. Clustering on the question is the right unit because forecasts
+within a question share an outcome. For ForecastBench the cluster is the
+question, so the several horizons of one question resample together. Nothing
+upstream of the summaries is re-run per replicate, which is what keeps 2,000
+replicates affordable over a twelve-million-row panel.
+
+# Results {#sec-results}
+
+## Individual accuracy and calibration
+
+@tbl-headline gives the descriptive picture the aggregation results build on.
+The cohort ordering matches the tournament literature — superteams ahead of
+teams ahead of independent individuals — and the year-1 top decile stays well
+ahead of the pool it was drawn from in later years, which is the basic
+evidence that forecasting skill is a persistent trait rather than a run of
+luck [@mellers2014; @tetlock2015].
+
+```{r}
+#| label: tbl-headline
+#| tbl-cap: "Individual accuracy. GJP scores are day-weighted per forecaster
+#|   and question, averaged unweighted across questions. ForecastBench pools
+#|   scored rows within a cohort."
+gjp_head <- q("
+  WITH labeled AS (
+    SELECT s.*, t.user_id IS NOT NULL AND s.year >= 2 AS is_td
+    FROM gjp_user_question_scores s
+    LEFT JOIN gjp_top_decile t USING (user_id)
+    WHERE s.cond IN (1, 4, 5)
+  ), grouped AS (
+    SELECT
+      CASE WHEN is_td AND cond = 1 THEN 'GJP top decile (yrs 2-4)'
+           WHEN cond = 1 THEN 'GJP independent individuals'
+           WHEN cond = 4 THEN 'GJP teams'
+           WHEN cond = 5 THEN 'GJP superteams' END AS cohort,
+      ifp_id, avg(mean_daily_brier) AS q_score
+    FROM labeled GROUP BY 1, 2
+  )
+  SELECT cohort, count(*) AS n, 'questions' AS unit,
+         avg(q_score) AS mean_brier
+  FROM grouped GROUP BY cohort
+  UNION ALL
+  SELECT CASE cohort WHEN 'fb_public' THEN 'ForecastBench public'
+                     ELSE 'ForecastBench superforecasters' END,
+         count(*), 'scored rows',
+         avg(2 * (p - resolved_to) * (p - resolved_to))
+  FROM fb_binary GROUP BY 1, 3
+  ORDER BY mean_brier DESC")
+kbl(gjp_head, digits = 3, align = "lrlr",
+             format.args = list(big.mark = ","),
+             col.names = c("cohort", "n", "averaged over",
+                           "mean Brier [0-2]"))
+```
+
+@fig-calibration shows two distinct failure modes, and the distinction is
+what the transfer result in Section [-@sec-transfer] turns on. The
+ForecastBench superforecasters track the diagonal closely. The public crowd
+flattens above 50%: high probabilities are not matched by outcomes, which is
+overconfidence. The GJP cohorts sit below the diagonal across the upper half
+in the opposite direction — they overestimate the probability of the
+non-status-quo option, which is the familiar overprediction of change, and
+in this question set the status quo won
+`r num(n1("SELECT count(*) FROM questions_accepted WHERE outcome = 'b'"))`
+of `r num(n1("SELECT count(*) FROM questions_accepted"))` times.
+
+```{r}
+#| label: fig-calibration
+#| fig-cap: "Reliability diagrams, ten equal-width bins, Wilson 95% intervals
+#|   on the observed frequency. The dashed line is perfect calibration. Points
+#|   below the line are forecasts that were too high."
+#| fig-height: 3.3
+cal_gjp <- q("
+  SELECT cohort, p, resolved_to AS y FROM gjp_events
+  WHERE cohort IN ('gjp_individual', 'gjp_top_decile', 'gjp_superteam')")
+cal_fb <- q("SELECT cohort, p, resolved_to AS y FROM fb_binary")
+cal <- bind_rows(
+  cal_gjp |> mutate(panel = "GJP (survey events)"),
+  cal_fb |> mutate(panel = "ForecastBench (scored rows)")
+) |>
+  mutate(panel = factor(panel, levels = c("GJP (survey events)",
+                                          "ForecastBench (scored rows)"))) |>
+  group_by(panel, cohort) |>
+  group_modify(~ calibration_bins(.x$p, .x$y, bins = 10)) |>
+  ungroup() |>
+  mutate(cohort = recode(cohort,
+    gjp_individual = "independent individuals",
+    gjp_top_decile = "top decile (yrs 2-4)",
+    gjp_superteam = "superteams",
+    fb_public = "public", fb_super = "superforecasters"))
+pal5 <- stats::setNames(cfe_palette, c(
+  "independent individuals", "top decile (yrs 2-4)", "superteams",
+  "public", "superforecasters"))
+ggplot(cal, aes(mean_p, freq, color = cohort)) +
+  geom_abline(slope = 1, intercept = 0, color = cfe_muted,
+              linetype = "dashed", linewidth = 0.35) +
+  geom_linerange(aes(ymin = freq_low, ymax = freq_high), linewidth = 0.5,
+                 alpha = 0.7) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 1.4) +
+  facet_wrap(~panel) +
+  scale_color_manual(values = pal5) +
+  guides(color = guide_legend(nrow = 2, byrow = TRUE)) +
+  scale_x_continuous(limits = c(0, 1), labels = scales::percent) +
+  scale_y_continuous(limits = c(0, 1), labels = scales::percent) +
+  labs(x = "forecast probability (bin mean)", y = "observed frequency") +
+  theme_cfe(base_size = 9)
+```
+
+The Murphy decomposition in @tbl-murphy makes the same point numerically and
+adds one. Miscalibration is a modest share of every cohort's score; what
+separates the strong cohorts is resolution — they place probabilities nearer
+the extremes and are right about it. The ForecastBench public crowd is the
+exception in both terms at once: the largest reliability penalty in the table
+and the smallest resolution.
+
+```{r}
+#| label: tbl-murphy
+#| tbl-cap: "Murphy decomposition, event-pooled, two-option scale:
+#|   Brier = reliability - resolution + uncertainty. Lower reliability is
+#|   better (it is the miscalibration penalty); higher resolution is better."
+murphy <- bind_rows(
+  cal_gjp |> mutate(panel = "GJP"),
+  cal_fb |> mutate(panel = "ForecastBench")
+) |>
+  group_by(panel, cohort) |>
+  group_modify(~ murphy_decomposition(.x$p, .x$y, bins = 10)) |>
+  ungroup() |>
+  mutate(cohort = recode(cohort,
+    gjp_individual = "independent individuals",
+    gjp_top_decile = "top decile (yrs 2-4)",
+    gjp_superteam = "superteams",
+    fb_public = "public", fb_super = "superforecasters"))
+kbl(murphy, digits = 3,
+             col.names = c("corpus", "cohort", "reliability", "resolution",
+                           "uncertainty", "Brier (binned)"))
+```
+
+## Tuning
+
+@tbl-tuning gives the frozen parameters. Every one is an interior minimum of
+its grid; the first grid put three families on a boundary and was widened
+once, before any evaluation-year data was read. Extremizing has a clear
+optimum at `r sprintf("a = %.2g", settings$extremize_a)`: pushing the pooled
+log odds outward helps, and past that point the crowd becomes overconfident.
+The trimming families keep improving until they discard roughly
+`r pct(settings$trim)` from each side, which is close to behaving like a
+median — consistent with trimming's usual role of removing confident tails
+rather than reshaping the middle.
+
+```{r}
+#| label: tbl-tuning
+#| tbl-cap: "Parameters chosen on GJP years 1-2 and frozen before any
+#|   evaluation data was scored."
+sweep$family <- sub("[@0-9.]*$", "", sub("_k[0-9]+$", "_k", sweep$rule))
+sweep$value <- suppressWarnings(as.numeric(
+  ifelse(grepl("@", sweep$rule), sub("^.*@", "", sweep$rule),
+         sub("^select_crowd_k", "", sweep$rule))))
+chosen <- data.frame(
+  family = c("trimmed_mean", "hd_trim", "soften_mean", "extremized",
+             "select_crowd_k"),
+  value = c(settings$trim, settings$hd_trim, settings$soften,
+            settings$extremize_a, settings$select_k))
+tune_tbl <- merge(chosen, sweep, by = c("family", "value"))
+tune_tbl$grid <- vapply(tune_tbl$family, function(f) {
+  paste(sort(sweep$value[sweep$family == f]), collapse = ", ")
+}, character(1))
+tune_tbl$frozen <- format(tune_tbl$value, trim = TRUE)
+kbl(tune_tbl[, c("family", "grid", "frozen", "brier")],
+             digits = 3,
+             col.names = c("family", "grid searched", "frozen",
+                           "tuning-year Brier"))
+```
+
+## What the crowd is worth {#sec-worth}
+
+```{r}
+#| label: fig-horse-race
+#| fig-cap: "Aggregation rules out of sample, with 95% question-cluster
+#|   bootstrap intervals. The GJP panel is the held-out years 3-4. Parameters
+#|   were frozen on GJP years 1-2. The three panels are different question sets
+#|   and are not comparable across panels; what is comparable within a panel is
+#|   each rule against the average member of the same crowd, in orange. Select
+#|   crowd runs on GJP only."
+#| fig-height: 3.9
+plot_df <- results
+plot_df$is_baseline <- plot_df$rule == "individual forecaster"
+ord <- gjp$label[order(gjp$mean_brier, decreasing = TRUE)]
+plot_df$label <- factor(plot_df$label,
+                        levels = c(setdiff(ord, "average member"),
+                                   "average member"))
+ggplot(plot_df, aes(mean_brier, label, color = is_baseline)) +
+  geom_linerange(aes(xmin = ci_low, xmax = ci_high), linewidth = 0.6,
+                 alpha = 0.8) +
+  geom_point(size = 1.8) +
+  facet_wrap(~panel, scales = "free_x") +
+  scale_color_manual(values = c(`FALSE` = cfe_palette[1],
+                                `TRUE` = cfe_palette[2]),
+                     labels = c("aggregation rule", "average member")) +
+  labs(x = "mean question Brier [0-2], lower is better", y = NULL) +
+  theme_cfe(base_size = 9)
+```
+
+On the held-out GJP years the best rule scores
+`r f3(best_gjp$mean_brier)` against `r f3(ind_gjp$mean_brier)` for the
+average member of the same crowd on the same days — a reduction of
+`r pct(1 - best_gjp$mean_brier / ind_gjp$mean_brier)`. Most of it needs no
+cleverness. The weakest rule in the field, the plain mean, already reaches
+`r f3(worst_gjp$mean_brier)`; going from there to the best rule is worth a
+further `r f3(worst_gjp$mean_brier - best_gjp$mean_brier)`. Measured as the
+step from the average member to the weakest rule against the spread among
+the rules, aggregating is the larger decision by a factor of
+`r sprintf("%.1f", step_ratio(best_gjp$cohort))` — not by an order of
+magnitude.
+
+```{r}
+#| label: tbl-gain
+#| tbl-cap: "Paired per-question differences between the average member and
+#|   the best rule for that cohort, with question-cluster bootstrap intervals.
+#|   Positive means the crowd is better."
+ind_q <- individual_baseline_gjp(con, evaluation_years())
+best_q <- gjp_q[gjp_q$rule == best_gjp$rule, c("question_id", "brier")]
+paired <- merge(ind_q, best_q, by = "question_id",
+                suffixes = c("_ind", "_crowd"))
+paired$d <- paired$brier_ind - paired$brier_crowd
+b_gjp <- bootstrap_questions(paired, function(df) mean(df$d))
+
+fb_ind <- individual_baseline_fb(con)
+fb_best <- do.call(rbind, lapply(split(fb_q, fb_q$cohort), function(df) {
+  m <- stats::aggregate(brier ~ rule, data = df, FUN = mean)
+  df[df$rule == m$rule[which.min(m$brier)], ]
+}))
+fb_pair <- merge(fb_ind, fb_best,
+                 by = c("cohort", "question_id", "resolution_date"),
+                 suffixes = c("_ind", "_crowd"))
+fb_pair$d <- fb_pair$brier_ind - fb_pair$brier_crowd
+fb_boot <- lapply(split(fb_pair, fb_pair$cohort), function(df) {
+  c(rule = df$rule[1], bootstrap_questions(df, function(x) mean(x$d)))
+})
+gain <- data.frame(
+  comparison = c(
+    sprintf("GJP years 3-4: average member - %s", best_gjp$label),
+    sprintf("ForecastBench public: average member - %s",
+            rule_label(fb_boot$fb_public[["rule"]])),
+    sprintf("ForecastBench supers: average member - %s",
+            rule_label(fb_boot$fb_super[["rule"]]))),
+  estimate = c(b_gjp["estimate"], as.numeric(fb_boot$fb_public["estimate"]),
+               as.numeric(fb_boot$fb_super["estimate"])),
+  low = c(b_gjp["low"], as.numeric(fb_boot$fb_public["low"]),
+          as.numeric(fb_boot$fb_super["low"])),
+  high = c(b_gjp["high"], as.numeric(fb_boot$fb_public["high"]),
+           as.numeric(fb_boot$fb_super["high"])))
+kbl(gain, digits = 3,
+             col.names = c("paired difference in mean Brier", "estimate",
+                           "2.5%", "97.5%"))
+```
+
+The same ratio is `r sprintf("%.1f", step_ratio("fb_public"))` on the
+ForecastBench public crowd and `r sprintf("%.1f", step_ratio("fb_super"))` on
+the superforecasters. The supers are the interesting case: the cohort is
+close enough to its own aggregate that the rules are spread further apart
+than the aggregate is from a typical member, and every one of those gaps is
+smaller than its own interval. Aggregation buys the most where the
+individuals disagree the most. That is the mechanism, not an incidental
+finding, and it is the reason a rule comparison run only on expert crowds
+would understate what aggregation does for everyone else.
+
+## Crowd size
+
+```{r}
+#| label: fig-crowd-size
+#| fig-cap: "Accuracy against crowd size on the GJP evaluation years. On each
+#|   scoring day, up to n of that day's standing forecasters are drawn, so
+#|   every size is scored on the same days; 5 draws per question and size, up
+#|   to 30 days per question. At n = 1 the mean and median reduce to the drawn
+#|   forecast and land on the average-member baseline."
+#| fig-height: 3.3
+show <- c("mean", "median", "extremized")
+curve_plot <- curve[curve$rule %in% show, ]
+curve_plot$label <- rule_label(curve_plot$rule)
+ends <- curve_plot[curve_plot$size == max(curve_plot$size), ]
+ggplot(curve_plot, aes(size, brier, color = label)) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 1.4) +
+  geom_text(data = ends, aes(label = label), hjust = -0.12, vjust = 0.4,
+            size = 2.6, show.legend = FALSE) +
+  scale_x_log10(breaks = sort(unique(curve$size)),
+                expand = expansion(mult = c(0.04, 0.26))) +
+  scale_color_manual(values = cfe_palette[1:3], guide = "none") +
+  labs(x = "forecasters drawn at random (log scale)",
+       y = "mean Brier [0-2]") +
+  theme_cfe(base_size = 9)
+```
+
+Two things separate the rules in @fig-crowd-size. The simple mean flattens
+early: past roughly 25 forecasters it stops improving, because averaging
+probabilities pulls the aggregate toward the middle no matter how many people
+agree. Extremizing keeps gaining, because a larger crowd both cancels more
+noise and justifies more confidence in the pooled signal. At one forecaster
+the extremized rule is the worst of the three, which is the same fact seen
+from the other side: there is nothing to be confident about in a single
+opinion.
+
+The n = 1 point is also the design check. Drawing the subcrowd from each
+day's standing forecasters, rather than once per question, is what keeps the
+curve about size: a crowd sampled once per question covers more of a
+question's hard early stretch as it grows, and that extra coverage would show
+up as a size effect that is really a coverage effect. Because the draw is per
+day, every size is scored on the same days, and at n = 1 the mean and median
+land on
+`r f3(curve$brier[curve$rule == "mean" & curve$size == 1])` against
+`r f3(ind_gjp$mean_brier)` for the average member computed independently in
+@tbl-gain — a residue of
+`r f3(abs(curve$brier[curve$rule == "mean" & curve$size == 1] - ind_gjp$mean_brier))`
+left over from thinning the days.
+
+## The extremizing constant does not transfer {#sec-transfer}
+
+The constant tuned on GJP is worth
+`r f3(worst_gjp$mean_brier - best_gjp$mean_brier)` against the plain mean
+there, and costs accuracy on the modern round. On the ForecastBench
+superforecasters the extremized rule is near the front and near-identical to
+untuned pooling in log odds. On the public cohort it finishes
+`r rank_in("fb_public", "extremized")`th of `r n_rules`, behind even the plain
+mean, while the `r tolower(best_in("fb_public"))` wins.
+
+This is @fig-calibration arriving from the other direction. The GJP
+independents are collectively underconfident, so pushing their pooled
+forecast outward helps. The ForecastBench public crowd is already
+overconfident above 50%, and extremizing an overconfident crowd makes it
+worse. An extremizing constant is a property of a forecaster pool, not of
+aggregation in general, and one carried across pools without first checking
+the pool's calibration is a liability rather than a free improvement.
+
+The Neyman rule is the natural control, since it derives its factor from
+crowd size and has no constant to carry. It is spared the transfer question
+but not the underlying one: it still extremizes, so while it is the best rule
+on the supers it finishes `r rank_in("fb_public", "neyman")`th of
+`r n_rules` on the public — one place ahead of the tuned constant, not in a
+different class. What fails to transfer is extremizing itself, on a pool that
+does not need it.
+
+```{r}
+#| label: tbl-results
+#| tbl-cap: "Full results. Rows within a cohort are comparable; rows across
+#|   cohorts are different question sets. The GJP rows cover 155 held-out
+#|   questions; the ForecastBench rows cover 105 questions over 521
+#|   question-horizons. Intervals are 95% question-cluster bootstraps over
+#|   2,000 replicates."
+tbl <- results[order(results$corpus, results$cohort, results$mean_brier), ]
+kbl(
+  data.frame(
+    cohort = unname(cohort_label[tbl$cohort]),
+    rule = tbl$label,
+    brier = sprintf("%.3f", tbl$mean_brier),
+    interval = sprintf("[%.3f, %.3f]", tbl$ci_low, tbl$ci_high)),
+  align = "llrr",
+  col.names = c("cohort", "rule", "mean Brier [0-2]", "95% interval"))
+```
+
+## Reconciliation against published values
+
+A reproduction that agrees with nothing published is a bug until proven
+otherwise, so the results are anchored in three places.
+
+```{r}
+#| label: tbl-recon
+#| tbl-cap: "Reconciliation. The ForecastBench rows use the single-probability
+#|   convention to match the published leaderboard; everything else in this
+#|   paper is on the two-option scale."
+fb_mine <- q("
+  WITH agg AS (
+    SELECT cohort, question_id, resolution_date, median(p) AS med_p,
+           min(resolved_to) AS y
+    FROM fb_binary GROUP BY 1, 2, 3)
+  SELECT cohort, avg((med_p - y) * (med_p - y)) AS pooled_b
+  FROM agg GROUP BY cohort")
+train <- q("
+  WITH per_q AS (
+    SELECT ctt, ifp_id, avg(mean_daily_brier) AS q_score
+    FROM gjp_user_question_scores WHERE ctt IN ('1a', '1b') GROUP BY 1, 2)
+  SELECT ctt, avg(q_score) AS b FROM per_q GROUP BY ctt ORDER BY ctt")
+train_gain <- (train$b[1] - train$b[2]) / train$b[1]
+sup <- fb_mine$pooled_b[fb_mine$cohort == "fb_super"]
+pub <- fb_mine$pooled_b[fb_mine$cohort == "fb_public"]
+recon <- data.frame(
+  anchor = c(
+    "FB leaderboard: supers, median forecast",
+    "FB leaderboard: public, median forecast",
+    "FB leaderboard: gap between the cohorts",
+    "Probability-training gain (Mellers et al. 2014)",
+    "Tournament cohort ordering"),
+  published = c("0.131 (adjusted)", "0.165 (adjusted)", "0.034",
+                "about 10%", "supers < teams < independents"),
+  ours = c(f3(sup), f3(pub), f3(pub - sup),
+           sprintf("%.1f%% (1a %.3f, 1b %.3f)", 100 * train_gain,
+                   train$b[1], train$b[2]),
+           "0.168 < 0.293 < 0.382"))
+kbl(recon, align = "llr",
+    col.names = c("anchor", "published", "this paper"))
+```
+
+The scored set contains exactly the leaderboard's 521 dataset
+question-horizons. The reproduced medians sit about 0.008 below the published
+figures, and the reason is that the two are not the same statistic. The
+leaderboard's Brier column is difficulty-adjusted: ForecastBench fits a
+two-way fixed-effects model of the score on question and model, subtracts each
+row's estimated question effect, and rescales so that an always-0.5 forecaster
+averages 0.25. Because the human entries cover only this one round while the
+field of entrants spans many, the question effects do not average out for
+them and the adjustment lands as a roughly constant offset. The quantity that
+survives the adjustment is the gap between the two human cohorts, and it does:
+`r f3(pub - sup)` here against 0.034 published. Nothing was tuned to close the
+difference, and the raw figures are what this paper reports throughout.
+
+Absolute GJP values are not chased precisely, because published figures for
+that tournament vary with standardisation, year window and question set.
+The anchors used instead are the cohort ordering, the probability-training
+effect, and the exact ForecastBench question-horizon match, all of which
+reproduce.
+
+# Limitations {#sec-limits}
+
+**Selection into the corpora.** Both populations volunteered for forecasting
+tournaments. Nothing here describes how an arbitrary group of people would
+perform, and the crowd-size curve in particular is a curve over this pool.
+
+**The population shifts across the split.** The evaluation years are not the
+tuning years with more data. The tuning years hold
+`r num(n1("SELECT count(DISTINCT user_id) FROM gjp_panel WHERE q_year <= 2"))`
+forecasters against
+`r num(n1("SELECT count(DISTINCT user_id) FROM gjp_panel WHERE q_year >= 3"))`
+in the evaluation years, superforecaster teams were extracted after year 1,
+and conditions were added and dropped between seasons. This is the honest
+version of an out-of-sample test on tournament data — a temporal split
+carries a population change with it — and it means the transfer result inside
+GJP is a weaker claim than the transfer result across corpora.
+
+**Binary questions only.** Ordered and conditional questions are excluded with
+counts. A distance-aware score would be needed for the former and a
+realized-condition protocol for the latter, and neither is in scope here.
+
+**One modern round.** ForecastBench contributes a single round, at five
+scored horizons out of eight. It cannot support forecaster histories, so
+select-crowd does not run there, and the transfer conclusion rests on one
+snapshot of two cohorts rather than on a series.
+
+**Aggregate versus individual comparison.** The average-member baseline is
+what a randomly chosen member of the standing crowd scores, which is the
+right comparison for "is the crowd worth more than one of its members". It is
+not the same as the best member, who cannot be identified in advance; the
+select-crowd rule is the closest this paper comes to that question and it
+finishes mid-field.
+
+**The crowd-size curve is thinned.** Days are subsampled to at most 30 per
+question to keep the sweep affordable. The residue this leaves is visible and
+quantified in Section [-@sec-worth]: about 0.002 at n = 1.
+
+# Reproducibility {#sec-repro}
+
+The analysis is R end to end [@rcore], over a local DuckDB database
+[@duckdb], with dependencies locked by `renv` and continuous integration on
+every push. `make all` runs the chain from verified raw files to results:
+checksum verification, ingest, the two scoring layers, the aggregation
+experiments, the QA gate, and the tests. Raw data is never committed; the
+manifest of file sizes and MD5 sums is, and no build starts until every file
+matches it.
+
+Three properties are worth stating because they were not free. The build
+fails on any of `r n_hard` hard invariants, including the two accounting
+identities of Section [-@sec-data] and the requirement that the day panel
+hold exactly the days the protocol scores. The suite is
+`r num(n_assertions)` assertions over hand-computed fixtures, including
+the segment arithmetic, the strict leakage boundary, and a cross-check of
+every aggregation rule against an independent implementation. And the results
+are reproducible run to run: SQL grouping promises no row order, and both the
+bootstrap and the crowd-size draw read row order, so every read that feeds
+them is explicitly ordered — without which identical data produced different
+intervals on repeated runs.
+
+Repository: <https://github.com/nacapule/crowd-forecast-evaluation>.
+
+# References {.unnumbered}
+
+::: {#refs}
+:::
+
+```{r teardown}
+DBI::dbDisconnect(con, shutdown = TRUE)
+```
