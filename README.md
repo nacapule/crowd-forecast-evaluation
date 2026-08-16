@@ -15,8 +15,13 @@ corpora:
   [forecastingresearch/forecastbench-datasets](https://github.com/forecastingresearch/forecastbench-datasets),
   CC BY-SA 4.0.
 
-Status: data layer (acquisition, normalization, QA). Scoring, calibration, and
-aggregation experiments to follow.
+Status: data layer and the scoring/calibration core are in place — proper
+scores under a stated daily carry-forward protocol, reliability diagrams,
+Murphy decompositions, skill and horizon analyses, and reconciliation against
+published baselines ([analysis/scoring-calibration.qmd](analysis/scoring-calibration.qmd)).
+The out-of-sample aggregation comparison is next.
+
+![Reliability diagrams](analysis/figures/calibration.png)
 
 ## Reproducing
 
@@ -25,8 +30,11 @@ Everything runs locally in R against a DuckDB database built from the raw files.
 ```
 make fetch    # verify raw data files (prints download instructions if missing)
 make data     # build the DuckDB analysis schema from raw files
+make fb       # add the ForecastBench single-shot scoring layer
+make scores   # apply the GJP daily carry-forward scoring protocol
 make qa       # run the QA gate and write qa/qa_report.md
 make test     # unit tests
+make analyze  # render the analysis notebook (requires Quarto)
 ```
 
 Harvard Dataverse sits behind a browser-verification wall, so the raw GJP files

@@ -142,3 +142,13 @@ question, accepted questions without an `a`/`b` outcome, accounting-identity
 violations at either level, and binary-view row counts that do not match
 accepted event counts. Soft checks (reported, not fatal): out-of-window
 counts and unrecognized condition codes.
+
+Two later layers build on this schema. `make fb` ingests the ForecastBench
+2024-07-21 human round (fetched at a pinned upstream commit by
+`scripts/fetch_forecastbench.sh`) into `fb_questions` / `fb_resolutions` /
+`fb_forecasts` / `fb_binary` with its own accounting table; `make scores`
+applies the GJP scoring protocol (segment-based daily carry-forward,
+withdrawal handling, year-1-defined top decile) producing
+`gjp_daily_events`, `gjp_segments`, `gjp_user_question_scores`, and the
+cohort-labeled `gjp_events`. Both layers add hard QA checks. The protocol
+definitions and all results live in `analysis/scoring-calibration.qmd`.

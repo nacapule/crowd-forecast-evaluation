@@ -19,5 +19,9 @@ Imports:
     stringr,
     glue,
     jsonlite,
+    ggplot2,
+    scales,
+    knitr,
+    rmarkdown,
     testthat,
     lintr
